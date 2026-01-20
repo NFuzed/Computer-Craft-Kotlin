@@ -1,8 +1,10 @@
 package app
 
+import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.engine.*
 import io.ktor.server.netty.*
+import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import io.ktor.server.websocket.*
 import io.ktor.websocket.*
@@ -19,7 +21,7 @@ data class Hello(
     val turtleId: Int,
     val label: String? = null,
     val capabilities: List<String> = emptyList(),
-    val ts: Double? = null // instead of Long?
+    val ts: Double? = null
 )
 
 @Serializable
@@ -41,6 +43,42 @@ fun main() {
         }
 
         routing {
+            // manifest
+            get("/manifest.json") {
+                val stream = this::class.java.classLoader.getResourceAsStream("manifest.json")
+                    ?: return@get call.respond(HttpStatusCode.NotFound)
+                call.respondText(
+                    stream.bufferedReader().readText(),
+                    ContentType.Application.Json
+                )
+            }
+
+
+            // serve any resource file by path
+            get("/files/{path...}") {
+                val parts = call.parameters.getAll("path") ?: emptyList()
+                val resourcePath = parts.joinToString("/")
+
+                val stream = this::class.java.classLoader.getResourceAsStream(resourcePath)
+                    ?: return@get call.respond(HttpStatusCode.NotFound, "Not found: $resourcePath")
+
+                val bytes = stream.readBytes()
+
+                call.respondBytes(
+                    bytes = bytes,
+                    contentType = ContentType.Application.OctetStream
+                )
+            }
+
+
+            // boot itself (optional: or just serve under /files/bootstrap/boot.lua)
+            get("/bootstrap/boot.lua") {
+                val stream = this::class.java.classLoader.getResourceAsStream("bootstrap/boot.lua")
+                    ?: return@get call.respond(HttpStatusCode.NotFound)
+                val text = stream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                call.respondText(text, ContentType.Text.Plain.withCharset(Charsets.UTF_8))
+            }
+
             webSocket("/ws") {
                 val json = Json {
                     ignoreUnknownKeys = true

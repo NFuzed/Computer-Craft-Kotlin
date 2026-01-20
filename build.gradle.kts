@@ -1,3 +1,5 @@
+import java.security.MessageDigest
+
 plugins {
     kotlin("jvm") version "1.9.21"
     kotlin("plugin.serialization") version "1.9.21"
@@ -22,11 +24,10 @@ dependencies {
 
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json")
 
-    implementation("ch.qos.logback:logback-classic")
 }
 
 application {
-    mainClass.set("MainKt")
+    mainClass.set("app/MainKt")
 }
 
 kotlin {
@@ -50,3 +51,57 @@ sourceSets {
     }
 }
 
+fun sha1Hex(bytes: ByteArray): String =
+    MessageDigest.getInstance("SHA-1")
+        .digest(bytes)
+        .joinToString("") { "%02x".format(it) }
+
+tasks.register("genManifest") {
+    group = "build"
+    description = "Generate manifest.json with SHA1s for resource files"
+
+    doLast {
+        val resDir = project.layout.projectDirectory
+            .dir("computercraft-fleet/controllerKotlin/src/main/resources")
+            .asFile
+
+        val templateFile = File(resDir, "manifest.template.json")
+        val outFile = File(resDir, "manifest.json")
+
+        require(templateFile.exists()) {
+            "Missing manifest.template.json at: ${templateFile.path}"
+        }
+
+        val templateText = templateFile.readText(Charsets.UTF_8)
+
+        val pathRegex = Regex("\"path\"\\s*:\\s*\"([^\"]+)\"")
+        val paths = pathRegex.findAll(templateText)
+            .map { it.groupValues[1] }
+            .toList()
+
+        require(paths.isNotEmpty()) { "No file paths found in manifest.template.json" }
+
+        val shaByPath = paths.associateWith { p ->
+            val f = File(resDir, p)
+            require(f.exists()) { "Missing resource file: $p (expected at ${f.path})" }
+            sha1Hex(f.readBytes())
+        }
+
+        var outText = templateText
+        for ((path, sha) in shaByPath) {
+            val fileEntryRegex = Regex(
+                "(\"path\"\\s*:\\s*\"${Regex.escape(path)}\"\\s*,\\s*\"sha1\"\\s*:\\s*\")([^\"]*)(\")"
+            )
+            outText = outText.replace(fileEntryRegex) { m ->
+                m.groupValues[1] + sha + m.groupValues[3]
+            }
+        }
+
+        outFile.writeText(outText, Charsets.UTF_8)
+        println("Wrote ${outFile.path}")
+    }
+}
+
+tasks.named("run") {
+    dependsOn("genManifest")
+}
