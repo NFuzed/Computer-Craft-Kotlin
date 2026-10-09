@@ -29,6 +29,15 @@ class TurtleRegistry(
         }
     }
 
+    /** Registration is authoritative for the label, so a turtle that clears its label shows as unlabelled. */
+    fun register(turtleId: Int, label: String?) {
+        map[turtleId] = TurtleInfo(turtleId = turtleId, label = label, lastSeen = clock())
+    }
+
+    /** Refreshes lastSeen for a known turtle. Returns false if the turtle has not registered. */
+    fun touch(turtleId: Int): Boolean =
+        map.computeIfPresent(turtleId) { _, existing -> existing.copy(lastSeen = clock()) } != null
+
     fun get(turtleId: Int): TurtleInfo? = map[turtleId]
 
     fun all(): List<TurtleInfo> = map.values.sortedBy { it.turtleId }

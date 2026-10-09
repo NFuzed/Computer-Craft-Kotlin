@@ -9,6 +9,9 @@ import io.ktor.server.routing.*
 import protocol.Protocol
 import protocol.api.ApiError
 import protocol.messages.PositionUpdate
+import protocol.messages.RegisterRequest
+
+private const val INVALID_TURTLE_ID = "Invalid turtle id"
 
 fun Route.apiRoutes(fleet: FleetService) {
     route(Protocol.Paths.API) {
@@ -18,7 +21,7 @@ fun Route.apiRoutes(fleet: FleetService) {
 
         get(Protocol.Paths.TURTLE) {
             val id = call.parameters["id"]?.toIntOrNull()
-                ?: return@get call.respond(HttpStatusCode.BadRequest, ApiError("Invalid turtle id"))
+                ?: return@get call.respond(HttpStatusCode.BadRequest, ApiError(INVALID_TURTLE_ID))
 
             val status = fleet.status(id)
                 ?: return@get call.respond(HttpStatusCode.NotFound, ApiError("Unknown turtle: $id"))
@@ -26,10 +29,41 @@ fun Route.apiRoutes(fleet: FleetService) {
             call.respond(status)
         }
 
+        // Turtles call this once after boot
+        post(Protocol.Paths.TURTLE_REGISTER) {
+            val id = call.parameters["id"]?.toIntOrNull()
+                ?: return@post call.respond(HttpStatusCode.BadRequest, ApiError(INVALID_TURTLE_ID))
+
+            val request = runCatching { call.receive<RegisterRequest>() }.getOrElse {
+                return@post call.respond(HttpStatusCode.BadRequest, ApiError("Invalid register body"))
+            }
+
+            if (request.turtleId != id) {
+                return@post call.respond(
+                    HttpStatusCode.BadRequest,
+                    ApiError("turtleId in body (${request.turtleId}) does not match path ($id)")
+                )
+            }
+
+            call.respond(fleet.register(request))
+        }
+
+        // Keeps a registered turtle online; 404 tells the turtle to register again
+        post(Protocol.Paths.TURTLE_HEARTBEAT) {
+            val id = call.parameters["id"]?.toIntOrNull()
+                ?: return@post call.respond(HttpStatusCode.BadRequest, ApiError(INVALID_TURTLE_ID))
+
+            if (!fleet.heartbeat(id)) {
+                return@post call.respond(HttpStatusCode.NotFound, ApiError("Turtle $id is not registered"))
+            }
+
+            call.respond(HttpStatusCode.NoContent)
+        }
+
         // Lets turtles (or curl) report a position over plain HTTP until /ws/turtle exists
         post(Protocol.Paths.TURTLE_POSITION) {
             val id = call.parameters["id"]?.toIntOrNull()
-                ?: return@post call.respond(HttpStatusCode.BadRequest, ApiError("Invalid turtle id"))
+                ?: return@post call.respond(HttpStatusCode.BadRequest, ApiError(INVALID_TURTLE_ID))
 
             val update = runCatching { call.receive<PositionUpdate>() }.getOrElse {
                 return@post call.respond(HttpStatusCode.BadRequest, ApiError("Invalid position body"))

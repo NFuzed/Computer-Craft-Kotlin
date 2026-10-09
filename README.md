@@ -24,7 +24,8 @@ tracking) is in place but not connected yet.
     │       │   ├── TurtleStatus.kt  # TurtleStatus + TurtlePosition (dashboard API)
     │       │   └── ApiError.kt
     │       └── messages/
-    │           └── PositionUpdate.kt
+    │           ├── PositionUpdate.kt
+    │           └── RegisterRequest.kt
     │
     └── controllerKotlin/            # The Ktor server
         └── src/main/
@@ -51,8 +52,8 @@ tracking) is in place but not connected yet.
                 │   ├── updater.lua
                 │   └── sha1converter.lua
                 └── turtle/
-                    ├── main.lua     # Entry program
-                    └── lib/net.lua
+                    ├── main.lua     # Entry program: registers, then heartbeats while it runs
+                    └── lib/net.lua  # register / heartbeat / position calls to /api
 ```
 
 Gradle builds everything as **one module**. The root `build.gradle.kts` adds the `protocol` and `controllerKotlin`
@@ -101,14 +102,16 @@ The public URL is hard-coded in two places. Update both whenever your tunnel or 
 
 The route paths are defined in `protocol.Protocol.Paths`.
 
-| Method | Path                         | Returns                                                                                                     |
-|--------|------------------------------|-------------------------------------------------------------------------------------------------------------|
-| `GET`  | `/bootstrap/boot.lua`        | The bootstrap script, as plain text                                                                         |
-| `GET`  | `/manifest.json`             | The file manifest (path, SHA-1, entry point)                                                                |
-| `GET`  | `/files/{path...}`           | Any file on the server's classpath under `resources/`, as raw bytes                                         |
-| `GET`  | `/api/turtles`               | `TurtleStatus[]` for every known turtle, sorted by ID                                                       |
-| `GET`  | `/api/turtles/{id}`          | One `TurtleStatus`, or `404`                                                                                |
-| `POST` | `/api/turtles/{id}/position` | Takes a `PositionUpdate` JSON body and returns `204`. This is temporary until turtles report over WebSocket |
+| Method | Path                          | Returns                                                                                                     |
+|--------|-------------------------------|-------------------------------------------------------------------------------------------------------------|
+| `GET`  | `/bootstrap/boot.lua`         | The bootstrap script, as plain text                                                                         |
+| `GET`  | `/manifest.json`              | The file manifest (path, SHA-1, entry point)                                                                |
+| `GET`  | `/files/{path...}`            | Any file on the server's classpath under `resources/`, as raw bytes                                         |
+| `GET`  | `/api/turtles`                | `TurtleStatus[]` for every known turtle, sorted by ID                                                       |
+| `GET`  | `/api/turtles/{id}`           | One `TurtleStatus`, or `404`                                                                                |
+| `POST` | `/api/turtles/{id}/register`  | Takes a `RegisterRequest` JSON body (`turtleId`, `label?`) and returns the turtle's `TurtleStatus`          |
+| `POST` | `/api/turtles/{id}/heartbeat` | Refreshes `lastSeen` and returns `204`, or `404` if the turtle isn't registered (it should register again)  |
+| `POST` | `/api/turtles/{id}/position`  | Takes a `PositionUpdate` JSON body and returns `204`. This is temporary until turtles report over WebSocket |
 
 `/api` responses are JSON. Errors come back as `{"error": "..."}` with status `400` or `404`. `TurtleStatus` (
 in `protocol.api`) contains `turtleId`, `label`, `online`, `lastSeen` and `position`. A turtle counts as online if the
@@ -142,7 +145,11 @@ boot.lua
           │      └─ GET {baseUrl}/{path}, write it, re-hash to verify
           └─ returns manifest.entry
    ▼
-dofile(entry)   -- turtle/main.lua
+entry(SERVER)   -- turtle/main.lua, given the server base URL
+   ├─ POST /api/turtles/{id}/register   (label from os.getComputerLabel())
+   ├─ POST /api/turtles/{id}/position   (only if gps.locate() gets a fix)
+   └─ every 10 s: POST /api/turtles/{id}/heartbeat
+          └─ 404 (server restarted) → register again
 ```
 
 Key details:
@@ -192,9 +199,10 @@ the hashes never match.
 These are `@Serializable` data classes in `protocol.messages`. Ktor encodes them with the
 shared `ProtocolJson` (`ignoreUnknownKeys = true`, `encodeDefaults = true`):
 
-| Message          | Direction       | Fields                                                                                                                              |
-|------------------|-----------------|-------------------------------------------------------------------------------------------------------------------------------------|
-| `PositionUpdate` | turtle → server | `v = Protocol.VERSION`, `type = "position_update"`, `turtleId`, `x`, `y`, `z`, `heading?` (`N/E/S/W`), `world?`, `dimension?`, `ts` |
+| Message           | Direction       | Fields                                                                                                                              |
+|-------------------|-----------------|-------------------------------------------------------------------------------------------------------------------------------------|
+| `RegisterRequest` | turtle → server | `v = Protocol.VERSION`, `type = "register"`, `turtleId`, `label?`                                                                   |
+| `PositionUpdate`  | turtle → server | `v = Protocol.VERSION`, `type = "position_update"`, `turtleId`, `x`, `y`, `z`, `heading?` (`N/E/S/W`), `world?`, `dimension?`, `ts` |
 
 ---
 
@@ -223,13 +231,15 @@ Done:
 - [x] Boot from a cached copy when the server is offline
 - [x] Manifest hashes generated at build time
 - [x] `/api/turtles` REST endpoints for the dashboard
+- [x] Turtles register after boot and send a heartbeat every 10 s (over HTTP for now)
+- [x] Turtles report their position on boot if a GPS network is in range
 
 Not yet connected:
 
 - [ ] `/ws/turtle` WebSocket session for turtles (plugin installed, no routes)
 - [ ] `/ws/dashboard` live event stream for the frontend
-- [ ] Turtles reporting their position (via `gps.locate()`)
-- [ ] `turtle/lib/net.lua`, which is currently empty
-- [ ] `turtle/main.lua`, which currently only sets the computer label
+- [ ] Turtles reporting their position as they move (currently only once, on boot)
+- [ ] Move register/heartbeat onto `/ws/turtle` once it exists
+- [ ] `turtle/main.lua` does real work (currently prints a test message)
 - [ ] Add `sha1converter.lua` to the manifest so it gets updated too
 - [ ] Make the server URL configurable instead of hard-coding it
