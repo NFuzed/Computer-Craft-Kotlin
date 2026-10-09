@@ -8,7 +8,8 @@ data class TurtleStatus(
     val label: String? = null,
     val online: Boolean,
     val lastSeen: Long? = null,     // unix seconds, null if never seen
-    val position: TurtlePosition? = null
+    val position: TurtlePosition? = null,
+    val pendingSeed: PositionSeed? = null // seed sent from the dashboard that the turtle hasn't applied yet
 )
 
 @Serializable
