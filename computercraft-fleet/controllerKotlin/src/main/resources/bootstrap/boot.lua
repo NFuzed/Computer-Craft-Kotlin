@@ -55,9 +55,10 @@ if not ok then
     print("Updater error: " .. tostring(entryOrErr))
     print("Continuing anyway...")
 else
-    -- 3) Run entry
+    -- 3) Run entry, passing the server base URL as its argument
     if entryOrErr and fs.exists(entryOrErr) then
-        dofile(entryOrErr)
+        local entry = assert(loadfile(entryOrErr, nil, _ENV))
+        entry(SERVER)
     else
         print("No entry returned; check manifest.")
     end

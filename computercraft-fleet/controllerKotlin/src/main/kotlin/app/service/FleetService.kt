@@ -5,6 +5,7 @@ import app.store.TurtleRegistry
 import protocol.api.TurtlePosition
 import protocol.api.TurtleStatus
 import protocol.messages.PositionUpdate
+import protocol.messages.RegisterRequest
 
 /**
  * Combines the registry (who is connected) and position store (where they are)
@@ -32,6 +33,14 @@ class FleetService(
             position = pos
         )
     }
+
+    fun register(request: RegisterRequest): TurtleStatus {
+        registry.register(request.turtleId, request.label?.takeIf { it.isNotBlank() })
+        return status(request.turtleId)!!
+    }
+
+    /** Returns false if the turtle is unknown (e.g. the server restarted), so it should register again. */
+    fun heartbeat(turtleId: Int): Boolean = registry.touch(turtleId)
 
     fun recordPosition(update: PositionUpdate) {
         registry.recordSeen(update.turtleId)
