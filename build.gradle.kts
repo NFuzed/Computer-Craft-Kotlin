@@ -102,6 +102,8 @@ tasks.register("genManifest") {
     }
 }
 
-tasks.named("run") {
+// Resources (including manifest.json) are copied by processResources, so the manifest
+// must be regenerated before that copy, not just before `run`.
+tasks.named("processResources") {
     dependsOn("genManifest")
 }

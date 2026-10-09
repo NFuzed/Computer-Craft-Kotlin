@@ -1,0 +1,4 @@
+# Files served to ComputerCraft must be byte-identical to what the manifest hashes,
+# so keep them LF regardless of core.autocrlf.
+*.lua  text eol=lf
+*.json text eol=lf
