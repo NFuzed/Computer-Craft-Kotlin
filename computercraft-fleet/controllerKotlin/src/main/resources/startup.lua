@@ -1,7 +1,7 @@
 -- startup.lua
 -- Fetch latest boot.lua from Kotlin server; fall back to cached boot.lua if offline.
 
-local BASE = "http://192.168.1.95:8000"
+local BASE = "https://eveline-semiphilosophic-marc.ngrok-free.dev"
 local BOOT_URL = BASE .. "/bootstrap/boot.lua"
 local CACHED_BOOT = "boot.lua"
 

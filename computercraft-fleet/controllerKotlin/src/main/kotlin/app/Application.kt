@@ -1,10 +1,23 @@
 package app
 
+import app.plugin.configureSerialization
 import app.plugin.configureWebSockets
 import app.route.configureRoutes
+import app.service.FleetService
+import app.store.PositionStore
+import app.store.TurtleRegistry
 import io.ktor.server.application.*
+import java.io.File
 
 fun Application.module() {
     configureWebSockets()
-    configureRoutes()
+    configureSerialization()
+
+    val positionStore = PositionStore(
+        file = File("data/positions.json")
+    )
+    val registry = TurtleRegistry()
+    val fleet = FleetService(registry, positionStore)
+
+    configureRoutes(fleet)
 }

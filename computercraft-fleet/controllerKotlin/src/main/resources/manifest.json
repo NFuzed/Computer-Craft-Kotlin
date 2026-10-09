@@ -1,15 +1,19 @@
 {
   "v": 1,
   "appVersion": "0.1.0",
-  "baseUrl": "http://192.168.1.95:8000/files",
+  "baseUrl": "https://eveline-semiphilosophic-marc.ngrok-free.dev/files",
   "files": [
     {
+      "path": "startup.lua",
+      "sha1": "1cb4a53a8a8fe301a31a8f1aef31bbec93e0774a"
+    },
+    {
       "path": "bootstrap/updater.lua",
-      "sha1": "3ac8ac44e64a0622ef66689d311bd2dccde8f85e"
+      "sha1": "330a1b53d33e466e03067d9e28f1a00d2480d165"
     },
     {
       "path": "turtle/main.lua",
-      "sha1": "da39a3ee5e6b4b0d3255bfef95601890afd80709"
+      "sha1": "e343a35cf2fa04782749dab102d45129cdb0b644"
     },
     {
       "path": "turtle/lib/net.lua",
