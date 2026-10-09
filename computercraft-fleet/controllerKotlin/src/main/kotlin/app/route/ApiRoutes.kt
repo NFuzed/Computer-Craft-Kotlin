@@ -8,6 +8,8 @@ import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import protocol.Protocol
 import protocol.api.ApiError
+import protocol.api.HEADINGS
+import protocol.api.SeedRequest
 import protocol.messages.PositionUpdate
 import protocol.messages.RegisterRequest
 
@@ -48,16 +50,34 @@ fun Route.apiRoutes(fleet: FleetService) {
             call.respond(fleet.register(request))
         }
 
-        // Keeps a registered turtle online; 404 tells the turtle to register again
+        // Keeps a registered turtle online and hands it any pending seed; 404 tells the turtle to register again
         post(Protocol.Paths.TURTLE_HEARTBEAT) {
             val id = call.parameters["id"]?.toIntOrNull()
                 ?: return@post call.respond(HttpStatusCode.BadRequest, ApiError(INVALID_TURTLE_ID))
 
-            if (!fleet.heartbeat(id)) {
-                return@post call.respond(HttpStatusCode.NotFound, ApiError("Turtle $id is not registered"))
+            val response = fleet.heartbeat(id)
+                ?: return@post call.respond(HttpStatusCode.NotFound, ApiError("Turtle $id is not registered"))
+
+            call.respond(response)
+        }
+
+        // Dashboard (and later commander turtles) set where a turtle is; delivered on its next heartbeat
+        post(Protocol.Paths.TURTLE_SEED) {
+            val id = call.parameters["id"]?.toIntOrNull()
+                ?: return@post call.respond(HttpStatusCode.BadRequest, ApiError(INVALID_TURTLE_ID))
+
+            val request = runCatching { call.receive<SeedRequest>() }.getOrElse {
+                return@post call.respond(HttpStatusCode.BadRequest, ApiError("Invalid seed body"))
             }
 
-            call.respond(HttpStatusCode.NoContent)
+            if (request.heading !in HEADINGS) {
+                return@post call.respond(
+                    HttpStatusCode.BadRequest,
+                    ApiError("heading must be one of ${HEADINGS.joinToString()}, got '${request.heading}'")
+                )
+            }
+
+            call.respond(HttpStatusCode.Accepted, fleet.seed(id, request))
         }
 
         // Lets turtles (or curl) report a position over plain HTTP until /ws/turtle exists

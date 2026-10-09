@@ -1,5 +1,5 @@
 -- turtle/lib/net.lua
--- Talks to the Kotlin server's /api routes: register, heartbeat, position.
+-- Talks to the Kotlin server's /api routes: register, heartbeat (which delivers seeds), position.
 local M = {}
 
 local PROTOCOL_VERSION = 1
@@ -36,31 +36,31 @@ function M.register(server)
     return true
 end
 
--- Returns true if the server still knows this turtle. A 404 means the server forgot us (restart).
+-- Returns true and the decoded response if the server still knows this turtle.
+-- The response may carry a position seed. A 404 means the server forgot us (restart).
 function M.heartbeat(server)
     local code, body = post(turtleUrl(server, "heartbeat"))
-    if code == 204 then
-        return true
+    if code == 200 then
+        return true, textutils.unserializeJSON(body) or {}
     elseif code == 404 then
         return false, "not registered"
     end
     return false, ("heartbeat failed: %s %s"):format(tostring(code), tostring(body))
 end
 
--- Reports a GPS position if a GPS network is in range. Returns false if there is no fix.
-function M.reportPosition(server, heading)
-    local x, y, z = gps.locate(2)
-    if not x then
-        return false, "no GPS fix"
-    end
+-- Reports a position snapshot from nav.position(). Its seedId (if any) acknowledges the seed.
+function M.reportPosition(server, pos)
     local code, body = post(turtleUrl(server, "position"), textutils.serializeJSON({
         v = PROTOCOL_VERSION,
         type = "position_update",
         turtleId = os.getComputerID(),
-        x = math.floor(x),
-        y = math.floor(y),
-        z = math.floor(z),
-        heading = heading,
+        x = pos.x,
+        y = pos.y,
+        z = pos.z,
+        heading = pos.heading,
+        world = pos.world,
+        dimension = pos.dimension,
+        seedId = pos.seedId,
         ts = math.floor(os.epoch("utc") / 1000)
     }))
     if code ~= 204 then
@@ -70,20 +70,26 @@ function M.reportPosition(server, heading)
 end
 
 -- Runs forever: heartbeats every HEARTBEAT_INTERVAL seconds and re-registers if the server forgot us.
+-- onTick(response) is called after every heartbeat, with the response if it succeeded or nil if not.
 -- Network errors are logged and retried on the next tick, so a server outage never crashes the turtle.
-function M.heartbeatLoop(server)
+function M.heartbeatLoop(server, onTick)
     while true do
-        sleep(HEARTBEAT_INTERVAL)
-        local ok, err = M.heartbeat(server)
-        if not ok and err == "not registered" then
-            ok, err = M.register(server)
+        local ok, res = M.heartbeat(server)
+        if not ok and res == "not registered" then
+            ok, res = M.register(server)
             if ok then
                 print("NET: re-registered with server")
+                res = nil -- pick up any seed on the next heartbeat
             end
         end
         if not ok then
-            print("NET: " .. tostring(err))
+            print("NET: " .. tostring(res))
+            res = nil
         end
+        if onTick then
+            onTick(res)
+        end
+        sleep(HEARTBEAT_INTERVAL)
     end
 end
 

@@ -18,6 +18,10 @@
     {
       "path": "turtle/lib/net.lua",
       "sha1": ""
+    },
+    {
+      "path": "turtle/lib/nav.lua",
+      "sha1": ""
     }
   ],
   "entry": "turtle/main.lua"

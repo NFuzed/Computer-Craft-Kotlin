@@ -14,5 +14,6 @@ data class PositionUpdate(
     val z: Int,
     val heading: String? = null,    // "N","E","S","W"
     val dimension: String? = null,  // optional
+    val seedId: Long? = null,       // set on the first report after applying a seed; acknowledges it
     val ts: Long = System.currentTimeMillis() / 1000
 )
