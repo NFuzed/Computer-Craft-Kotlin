@@ -10,5 +10,6 @@ fun Application.configureRoutes(fleet: FleetService) {
         fileRoutes()
         bootstrapRoutes()
         apiRoutes(fleet)
+        turtleSocketRoutes(fleet)
     }
 }

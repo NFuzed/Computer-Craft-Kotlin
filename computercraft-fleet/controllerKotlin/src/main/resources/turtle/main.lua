@@ -11,43 +11,66 @@ else
     print("NAV: no position yet - seed this turtle from the dashboard")
 end
 
-local ok, err = net.register(SERVER)
-if ok then
-    print(("NET: registered as turtle %d"):format(os.getComputerID()))
-else
-    -- the heartbeat loop keeps retrying, so we carry on
-    print("NET: " .. tostring(err))
-end
-
--- Runs after every heartbeat: applies a rename and a new seed, then reports the position if it changed.
-local function sync(res)
-    if not res then
-        return -- server unreachable or just re-registered; try again next tick
+-- Sends the position if it changed since the last report (or `force` is set). If we're offline it stays dirty,
+-- and goes out when we reconnect.
+local function reportPosition(force)
+    if not (nav.isDirty() or (force and nav.isSeeded())) then
+        return
     end
-    if res.label then
-        -- re-registering sends the new label, which tells the server the rename was applied
-        os.setComputerLabel(res.label.label)
-        local regOk, regErr = net.register(SERVER)
-        if regOk then
-            print("NET: renamed to " .. (os.getComputerLabel() or "(no label)"))
-        else
-            print("NET: " .. tostring(regErr))
-        end
-    end
-    if res.seed and nav.applySeed(res.seed) then
-        local s = res.seed
-        print(("NAV: seeded by %s at %d %d %d facing %s"):format(s.source, s.x, s.y, s.z, s.heading))
-    end
-    if nav.isDirty() then
-        local pos = nav.position()
-        local posOk, posErr = net.reportPosition(SERVER, pos)
-        if posOk then
-            nav.markReported(pos)
-        else
-            print("NET: " .. tostring(posErr))
-        end
+    local pos = nav.position()
+    local ok, err = net.reportPosition(pos)
+    if ok then
+        nav.markReported(pos)
+    else
+        print("NET: " .. tostring(err))
     end
 end
 
--- The heartbeat keeps the turtle online on the dashboard while it runs; Ctrl+T to stop.
-net.heartbeatLoop(SERVER, sync)
+local function reportInventory()
+    local ok, err = net.reportInventory()
+    if not ok then
+        print("NET: " .. tostring(err))
+    end
+end
+
+local function onConnect()
+    reportPosition()
+    reportInventory()
+end
+
+local function onMessage(msg)
+    if msg.type == "rename" then
+        -- msg.label is nil when the label is being cleared
+        os.setComputerLabel(msg.label)
+        net.reportLabel()
+        print("NET: renamed to " .. (os.getComputerLabel() or "(no label)"))
+    elseif msg.type == "seed" then
+        if nav.applySeed(msg.seed) then
+            local s = msg.seed
+            print(("NAV: seeded by %s at %d %d %d facing %s"):format(s.source, s.x, s.y, s.z, s.heading))
+        end
+        -- report even for a seed we already applied: the server resends it until a report acknowledges it
+        reportPosition(true)
+    elseif msg.type == "select_slot" then
+        -- turtle.select errors on a slot outside 1-16; report either way so the dashboard shows the real selection
+        local ok, err = pcall(turtle.select, msg.slot)
+        if not ok then
+            print("NET: can't select slot " .. tostring(msg.slot) .. ": " .. tostring(err))
+        end
+        reportInventory()
+    elseif msg.type == "error" then
+        print("NET: server error: " .. tostring(msg.error))
+    end
+end
+
+-- The connection keeps the turtle online on the dashboard while it runs; Ctrl+T to stop.
+net.run(SERVER, {
+    onConnect = onConnect,
+    onMessage = onMessage,
+    onEvent = function(event)
+        -- fires when items are added, removed or moved (but not when the selected slot changes)
+        if event == "turtle_inventory" and net.isConnected() then
+            reportInventory()
+        end
+    end
+})

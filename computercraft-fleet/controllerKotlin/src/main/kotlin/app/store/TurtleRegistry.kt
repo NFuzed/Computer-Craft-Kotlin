@@ -9,38 +9,27 @@ data class TurtleInfo(
 )
 
 /**
- * In-memory record of every turtle the server has heard from.
- * A turtle counts as online if it has been seen within [onlineTimeoutSec].
+ * In-memory record of every turtle the server has heard from: its label and when it last sent a message.
+ * Whether a turtle is online comes from its WebSocket connection (see TurtleSessions), not from this.
  */
 class TurtleRegistry(
-    private val onlineTimeoutSec: Long = 30,
     private val clock: () -> Long = { System.currentTimeMillis() / 1000 }
 ) {
     private val map = ConcurrentHashMap<Int, TurtleInfo>()
 
-    fun recordSeen(turtleId: Int, label: String? = null) {
+    fun recordSeen(turtleId: Int) {
         val now = clock()
         map.compute(turtleId) { _, existing ->
-            TurtleInfo(
-                turtleId = turtleId,
-                label = label ?: existing?.label,
-                lastSeen = now
-            )
+            existing?.copy(lastSeen = now) ?: TurtleInfo(turtleId = turtleId, lastSeen = now)
         }
     }
 
-    /** Registration is authoritative for the label, so a turtle that clears its label shows as unlabelled. */
-    fun register(turtleId: Int, label: String?) {
+    /** The turtle is authoritative for its label, so a turtle that clears its label shows as unlabelled. */
+    fun setLabel(turtleId: Int, label: String?) {
         map[turtleId] = TurtleInfo(turtleId = turtleId, label = label, lastSeen = clock())
     }
-
-    /** Refreshes lastSeen for a known turtle. Returns false if the turtle has not registered. */
-    fun touch(turtleId: Int): Boolean =
-        map.computeIfPresent(turtleId) { _, existing -> existing.copy(lastSeen = clock()) } != null
 
     fun get(turtleId: Int): TurtleInfo? = map[turtleId]
 
     fun all(): List<TurtleInfo> = map.values.sortedBy { it.turtleId }
-
-    fun isOnline(info: TurtleInfo): Boolean = clock() - info.lastSeen <= onlineTimeoutSec
 }

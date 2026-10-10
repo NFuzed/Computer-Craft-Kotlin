@@ -8,8 +8,6 @@ import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import protocol.Protocol
 import protocol.api.*
-import protocol.messages.PositionUpdate
-import protocol.messages.RegisterRequest
 
 private const val INVALID_TURTLE_ID = "Invalid turtle id"
 
@@ -29,37 +27,8 @@ fun Route.apiRoutes(fleet: FleetService) {
             call.respond(status)
         }
 
-        // Turtles call this once after boot
-        post(Protocol.Paths.TURTLE_REGISTER) {
-            val id = call.parameters["id"]?.toIntOrNull()
-                ?: return@post call.respond(HttpStatusCode.BadRequest, ApiError(INVALID_TURTLE_ID))
-
-            val request = runCatching { call.receive<RegisterRequest>() }.getOrElse {
-                return@post call.respond(HttpStatusCode.BadRequest, ApiError("Invalid register body"))
-            }
-
-            if (request.turtleId != id) {
-                return@post call.respond(
-                    HttpStatusCode.BadRequest,
-                    ApiError("turtleId in body (${request.turtleId}) does not match path ($id)")
-                )
-            }
-
-            call.respond(fleet.register(request))
-        }
-
-        // Keeps a registered turtle online and hands it any pending seed; 404 tells the turtle to register again
-        post(Protocol.Paths.TURTLE_HEARTBEAT) {
-            val id = call.parameters["id"]?.toIntOrNull()
-                ?: return@post call.respond(HttpStatusCode.BadRequest, ApiError(INVALID_TURTLE_ID))
-
-            val response = fleet.heartbeat(id)
-                ?: return@post call.respond(HttpStatusCode.NotFound, ApiError("Turtle $id is not registered"))
-
-            call.respond(response)
-        }
-
-        // Dashboard (and later commander turtles) set where a turtle is; delivered on its next heartbeat
+        // Dashboard (and later commander turtles) set where a turtle is; pushed now if the turtle is connected,
+        // otherwise when it next connects
         post(Protocol.Paths.TURTLE_SEED) {
             val id = call.parameters["id"]?.toIntOrNull()
                 ?: return@post call.respond(HttpStatusCode.BadRequest, ApiError(INVALID_TURTLE_ID))
@@ -78,7 +47,41 @@ fun Route.apiRoutes(fleet: FleetService) {
             call.respond(HttpStatusCode.Accepted, fleet.seed(id, request))
         }
 
-        // Dashboard renames a turtle; the turtle sets its own label on its next heartbeat
+        // The last inventory the turtle reported; it reports again whenever the inventory changes
+        get(Protocol.Paths.TURTLE_INVENTORY) {
+            val id = call.parameters["id"]?.toIntOrNull()
+                ?: return@get call.respond(HttpStatusCode.BadRequest, ApiError(INVALID_TURTLE_ID))
+
+            val inventory = fleet.inventory(id)
+                ?: return@get call.respond(HttpStatusCode.NotFound, ApiError("No inventory reported for turtle $id"))
+
+            call.respond(inventory)
+        }
+
+        // Dashboard picks the turtle's selected slot; the new selection shows up once the turtle reports its inventory
+        post(Protocol.Paths.TURTLE_SELECTED_SLOT) {
+            val id = call.parameters["id"]?.toIntOrNull()
+                ?: return@post call.respond(HttpStatusCode.BadRequest, ApiError(INVALID_TURTLE_ID))
+
+            val request = runCatching { call.receive<SelectSlotRequest>() }.getOrElse {
+                return@post call.respond(HttpStatusCode.BadRequest, ApiError("Invalid select slot body"))
+            }
+
+            if (request.slot !in 1..INVENTORY_SIZE) {
+                return@post call.respond(
+                    HttpStatusCode.BadRequest,
+                    ApiError("slot must be between 1 and $INVENTORY_SIZE, got ${request.slot}")
+                )
+            }
+
+            if (!fleet.selectSlot(id, request.slot)) {
+                return@post call.respond(HttpStatusCode.Conflict, ApiError("Turtle $id is not connected"))
+            }
+
+            call.respond(HttpStatusCode.Accepted, request)
+        }
+
+        // Dashboard renames a turtle; the turtle sets its own label when the rename reaches it
         put(Protocol.Paths.TURTLE_LABEL) {
             val id = call.parameters["id"]?.toIntOrNull()
                 ?: return@put call.respond(HttpStatusCode.BadRequest, ApiError(INVALID_TURTLE_ID))
@@ -93,26 +96,6 @@ fun Route.apiRoutes(fleet: FleetService) {
             }
 
             call.respond(HttpStatusCode.Accepted, fleet.rename(id, label))
-        }
-
-        // Lets turtles (or curl) report a position over plain HTTP until /ws/turtle exists
-        post(Protocol.Paths.TURTLE_POSITION) {
-            val id = call.parameters["id"]?.toIntOrNull()
-                ?: return@post call.respond(HttpStatusCode.BadRequest, ApiError(INVALID_TURTLE_ID))
-
-            val update = runCatching { call.receive<PositionUpdate>() }.getOrElse {
-                return@post call.respond(HttpStatusCode.BadRequest, ApiError("Invalid position body"))
-            }
-
-            if (update.turtleId != id) {
-                return@post call.respond(
-                    HttpStatusCode.BadRequest,
-                    ApiError("turtleId in body (${update.turtleId}) does not match path ($id)")
-                )
-            }
-
-            fleet.recordPosition(update)
-            call.respond(HttpStatusCode.NoContent)
         }
     }
 }

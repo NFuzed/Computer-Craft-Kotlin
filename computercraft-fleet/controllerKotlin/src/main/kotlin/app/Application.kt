@@ -4,10 +4,8 @@ import app.plugin.configureSerialization
 import app.plugin.configureWebSockets
 import app.route.configureRoutes
 import app.service.FleetService
-import app.store.LabelStore
-import app.store.PositionStore
-import app.store.SeedStore
-import app.store.TurtleRegistry
+import app.service.TurtleSessions
+import app.store.*
 import io.ktor.server.application.*
 import java.io.File
 
@@ -24,8 +22,11 @@ fun Application.module() {
     val labelStore = LabelStore(
         file = File("data/labels.json")
     )
+    val inventoryStore = InventoryStore(
+        file = File("data/inventories.json")
+    )
     val registry = TurtleRegistry()
-    val fleet = FleetService(registry, positionStore, seedStore, labelStore)
+    val fleet = FleetService(registry, TurtleSessions(), positionStore, seedStore, labelStore, inventoryStore)
 
     configureRoutes(fleet)
 }

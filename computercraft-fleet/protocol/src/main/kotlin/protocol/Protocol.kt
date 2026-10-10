@@ -11,10 +11,26 @@ object Protocol {
         const val API = "/api"
         const val TURTLES = "/turtles"
         const val TURTLE = "/turtles/{id}"
-        const val TURTLE_POSITION = "/turtles/{id}/position"
-        const val TURTLE_REGISTER = "/turtles/{id}/register"
-        const val TURTLE_HEARTBEAT = "/turtles/{id}/heartbeat"
         const val TURTLE_SEED = "/turtles/{id}/seed"
         const val TURTLE_LABEL = "/turtles/{id}/label"
+        const val TURTLE_INVENTORY = "/turtles/{id}/inventory"
+        const val TURTLE_SELECTED_SLOT = "/turtles/{id}/inventory/selected"
+
+        const val WS_TURTLE = "/ws/turtle"
+    }
+
+    /** `type` values of the messages sent over [Paths.WS_TURTLE]. */
+    object MessageTypes {
+        // turtle → server
+        const val HELLO = "hello"
+        const val POSITION_UPDATE = "position_update"
+        const val LABEL_UPDATE = "label_update"
+        const val INVENTORY_UPDATE = "inventory_update"
+
+        // server → turtle
+        const val SEED = "seed"
+        const val RENAME = "rename"
+        const val SELECT_SLOT = "select_slot"
+        const val ERROR = "error"
     }
 }
