@@ -81,6 +81,28 @@ fun Route.apiRoutes(fleet: FleetService) {
             call.respond(HttpStatusCode.Accepted, request)
         }
 
+        // Dashboard makes a turtle burn fuel from its selected slot; the outcome shows up as the inventory's lastRefuel
+        post(Protocol.Paths.TURTLE_REFUEL) {
+            val id = call.parameters["id"]?.toIntOrNull()
+                ?: return@post call.respond(HttpStatusCode.BadRequest, ApiError(INVALID_TURTLE_ID))
+
+            val request = runCatching { call.receive<RefuelRequest>() }.getOrElse {
+                return@post call.respond(HttpStatusCode.BadRequest, ApiError("Invalid refuel body"))
+            }
+
+            if (request.count != null && request.count !in 1..MAX_REFUEL_COUNT) {
+                return@post call.respond(
+                    HttpStatusCode.BadRequest,
+                    ApiError("count must be between 1 and $MAX_REFUEL_COUNT, got ${request.count}")
+                )
+            }
+
+            val command = fleet.refuel(id, request.count)
+                ?: return@post call.respond(HttpStatusCode.Conflict, ApiError("Turtle $id is not connected"))
+
+            call.respond(HttpStatusCode.Accepted, command)
+        }
+
         // Dashboard renames a turtle; the turtle sets its own label when the rename reaches it
         put(Protocol.Paths.TURTLE_LABEL) {
             val id = call.parameters["id"]?.toIntOrNull()

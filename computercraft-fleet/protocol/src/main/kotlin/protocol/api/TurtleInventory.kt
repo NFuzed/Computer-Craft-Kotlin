@@ -14,11 +14,20 @@ data class InventorySlot(
     val nbt: String? = null         // hash of the item's NBT, if it has any
 )
 
+/** A turtle's fuel, from turtle.getFuelLevel and turtle.getFuelLimit. Both are null when fuel is unlimited. */
+@Serializable
+data class TurtleFuel(
+    val level: Int? = null,
+    val limit: Int? = null
+)
+
 /** The last inventory a turtle reported. Empty slots are left out of [slots]. */
 @Serializable
 data class TurtleInventory(
     val selectedSlot: Int,
     val slots: List<InventorySlot>,
+    val fuel: TurtleFuel? = null,           // null if the turtle didn't report it (older turtle code)
+    val lastRefuel: RefuelResult? = null,   // the turtle's latest refuel since the server started; not saved
     val ts: Long
 )
 

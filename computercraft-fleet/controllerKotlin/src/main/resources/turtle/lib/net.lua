@@ -52,7 +52,8 @@ function M.reportLabel()
     return M.send({ type = "label_update", label = os.getComputerLabel() })
 end
 
--- Reports every non-empty inventory slot and the selected slot. The server replaces what it had with this.
+-- Reports every non-empty inventory slot, the selected slot and the fuel level. The server replaces what it had
+-- with this.
 function M.reportInventory()
     local slots = {}
     for slot = 1, 16 do
@@ -61,11 +62,26 @@ function M.reportInventory()
             slots[#slots + 1] = { slot = slot, name = item.name, count = item.count, nbt = item.nbt }
         end
     end
+    local level = turtle.getFuelLevel()
     return M.send({
         type = "inventory_update",
         selectedSlot = turtle.getSelectedSlot(),
         -- an empty Lua table would be sent as {}, not []
         slots = #slots > 0 and slots or textutils.empty_json_array,
+        -- level and limit are left out (null) when fuel is unlimited
+        fuel = level == "unlimited" and {} or { level = level, limit = turtle.getFuelLimit() },
+        ts = math.floor(os.epoch("utc") / 1000)
+    })
+end
+
+-- Tells the server how a refuel went. fuelAdded is nil when fuel is unlimited.
+function M.reportRefuelResult(refuelId, refueled, err, fuelAdded)
+    return M.send({
+        type = "refuel_result",
+        refuelId = refuelId,
+        refueled = refueled,
+        error = err,
+        fuelAdded = fuelAdded,
         ts = math.floor(os.epoch("utc") / 1000)
     })
 end
