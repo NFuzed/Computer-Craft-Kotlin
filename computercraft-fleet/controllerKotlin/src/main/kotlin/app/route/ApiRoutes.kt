@@ -7,9 +7,7 @@ import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import protocol.Protocol
-import protocol.api.ApiError
-import protocol.api.HEADINGS
-import protocol.api.SeedRequest
+import protocol.api.*
 import protocol.messages.PositionUpdate
 import protocol.messages.RegisterRequest
 
@@ -80,6 +78,23 @@ fun Route.apiRoutes(fleet: FleetService) {
             call.respond(HttpStatusCode.Accepted, fleet.seed(id, request))
         }
 
+        // Dashboard renames a turtle; the turtle sets its own label on its next heartbeat
+        put(Protocol.Paths.TURTLE_LABEL) {
+            val id = call.parameters["id"]?.toIntOrNull()
+                ?: return@put call.respond(HttpStatusCode.BadRequest, ApiError(INVALID_TURTLE_ID))
+
+            val request = runCatching { call.receive<LabelRequest>() }.getOrElse {
+                return@put call.respond(HttpStatusCode.BadRequest, ApiError("Invalid label body"))
+            }
+
+            val label = request.label?.trim()?.takeIf { it.isNotEmpty() }
+            labelError(label)?.let {
+                return@put call.respond(HttpStatusCode.BadRequest, ApiError(it))
+            }
+
+            call.respond(HttpStatusCode.Accepted, fleet.rename(id, label))
+        }
+
         // Lets turtles (or curl) report a position over plain HTTP until /ws/turtle exists
         post(Protocol.Paths.TURTLE_POSITION) {
             val id = call.parameters["id"]?.toIntOrNull()
@@ -100,4 +115,13 @@ fun Route.apiRoutes(fleet: FleetService) {
             call.respond(HttpStatusCode.NoContent)
         }
     }
+}
+
+/** Returns why [label] can't be used as a turtle label, or null if it's fine (null clears the label). */
+private fun labelError(label: String?): String? = when {
+    label == null -> null
+    label.length > MAX_LABEL_LENGTH -> "label must be at most $MAX_LABEL_LENGTH characters, got ${label.length}"
+    // ComputerCraft drops other characters, so the turtle's label would never match and the rename would repeat
+    label.any { it !in ' '..'~' } -> "label may only contain printable ASCII characters"
+    else -> null
 }

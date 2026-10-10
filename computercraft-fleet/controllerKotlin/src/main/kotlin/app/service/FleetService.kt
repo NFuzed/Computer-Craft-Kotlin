@@ -1,32 +1,31 @@
 package app.service
 
+import app.store.LabelStore
 import app.store.PositionStore
 import app.store.SeedStore
 import app.store.TurtleRegistry
-import protocol.api.PositionSeed
-import protocol.api.SeedRequest
-import protocol.api.TurtlePosition
-import protocol.api.TurtleStatus
+import protocol.api.*
 import protocol.messages.HeartbeatResponse
 import protocol.messages.PositionUpdate
 import protocol.messages.RegisterRequest
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * Combines the registry (who is connected), position store (where they are) and seed store
- * (positions waiting to be handed to turtles) into the [TurtleStatus] view served by the API.
+ * Combines the registry (who is connected), position store (where they are), seed store
+ * (positions waiting to be handed to turtles) and label store (pending renames) into the [TurtleStatus] view served by the API.
  */
 class FleetService(
     private val registry: TurtleRegistry,
     private val positions: PositionStore,
     private val seeds: SeedStore,
+    private val labels: LabelStore,
     private val clock: () -> Long = { System.currentTimeMillis() / 1000 }
 ) {
     // Starts at the current time in ms so ids stay unique across server restarts
     private val nextSeedId = AtomicLong(System.currentTimeMillis())
 
     fun allStatuses(): List<TurtleStatus> {
-        val ids = registry.all().map { it.turtleId } + positions.ids() + seeds.ids()
+        val ids = registry.all().map { it.turtleId } + positions.ids() + seeds.ids() + labels.ids()
         return ids.distinct().sorted().mapNotNull { status(it) }
     }
 
@@ -34,7 +33,8 @@ class FleetService(
         val info = registry.get(turtleId)
         val pos = positions.get(turtleId)
         val seed = seeds.get(turtleId)
-        if (info == null && pos == null && seed == null) return null
+        val pendingLabel = labels.get(turtleId)
+        if (info == null && pos == null && seed == null && pendingLabel == null) return null
 
         return TurtleStatus(
             turtleId = turtleId,
@@ -42,19 +42,22 @@ class FleetService(
             online = info?.let { registry.isOnline(it) } ?: false,
             lastSeen = info?.lastSeen,
             position = pos,
-            pendingSeed = seed
+            pendingSeed = seed,
+            pendingLabel = pendingLabel
         )
     }
 
     fun register(request: RegisterRequest): TurtleStatus {
-        registry.register(request.turtleId, request.label?.takeIf { it.isNotBlank() })
+        val label = request.label?.takeIf { it.isNotBlank() }
+        registry.register(request.turtleId, label)
+        labels.acknowledge(request.turtleId, label)
         return status(request.turtleId)!!
     }
 
     /** Returns null if the turtle is unknown (e.g. the server restarted), so it should register again. */
     fun heartbeat(turtleId: Int): HeartbeatResponse? {
         if (!registry.touch(turtleId)) return null
-        return HeartbeatResponse(seed = seeds.get(turtleId))
+        return HeartbeatResponse(seed = seeds.get(turtleId), label = labels.get(turtleId))
     }
 
     /**
@@ -75,6 +78,15 @@ class FleetService(
         )
         seeds.put(turtleId, seed)
         return seed
+    }
+
+    /**
+     * Queues a rename for the turtle to apply on its next heartbeat (null clears its label). Like seeds,
+     * the turtle doesn't need to be registered yet.
+     */
+    fun rename(turtleId: Int, label: String?): TurtleStatus {
+        labels.put(turtleId, PendingLabel(label = label, ts = clock()))
+        return status(turtleId)!!
     }
 
     fun recordPosition(update: PositionUpdate) {

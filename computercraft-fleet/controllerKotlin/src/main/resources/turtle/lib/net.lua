@@ -37,7 +37,7 @@ function M.register(server)
 end
 
 -- Returns true and the decoded response if the server still knows this turtle.
--- The response may carry a position seed. A 404 means the server forgot us (restart).
+-- The response may carry a position seed and/or a rename. A 404 means the server forgot us (restart).
 function M.heartbeat(server)
     local code, body = post(turtleUrl(server, "heartbeat"))
     if code == 200 then
