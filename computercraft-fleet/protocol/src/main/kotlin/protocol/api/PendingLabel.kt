@@ -12,8 +12,9 @@ data class LabelRequest(
 )
 
 /**
- * A rename waiting to be delivered. The server hands it to the turtle in its heartbeat response; the turtle
- * applies it with os.setComputerLabel and registers again, and a registration carrying the same [label] clears it.
+ * A rename waiting to be delivered. The server pushes it to the turtle over /ws/turtle; the turtle applies it
+ * with os.setComputerLabel and replies with a label_update, and a label_update or hello carrying the same [label]
+ * clears it.
  */
 @Serializable
 data class PendingLabel(

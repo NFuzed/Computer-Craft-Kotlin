@@ -21,7 +21,7 @@ data class SeedRequest(
 )
 
 /**
- * A seed waiting to be delivered. The server hands it to the turtle in its heartbeat response
+ * A seed waiting to be delivered. The server pushes it to the turtle over /ws/turtle
  * and clears it once the turtle reports a position carrying the same [seedId].
  */
 @Serializable

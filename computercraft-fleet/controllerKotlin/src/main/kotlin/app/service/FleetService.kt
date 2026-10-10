@@ -1,24 +1,26 @@
 package app.service
 
-import app.store.LabelStore
-import app.store.PositionStore
-import app.store.SeedStore
-import app.store.TurtleRegistry
+import app.store.*
+import io.ktor.websocket.*
+import kotlinx.serialization.encodeToString
+import protocol.ProtocolJson
 import protocol.api.*
-import protocol.messages.HeartbeatResponse
-import protocol.messages.PositionUpdate
-import protocol.messages.RegisterRequest
+import protocol.messages.*
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * Combines the registry (who is connected), position store (where they are), seed store
- * (positions waiting to be handed to turtles) and label store (pending renames) into the [TurtleStatus] view served by the API.
+ * Combines the registry (labels, last seen), sessions (who is connected), position store (where they are), seed store
+ * (positions waiting to be handed to turtles) and label store (pending renames) into the [TurtleStatus] view served by
+ * the API, keeps each turtle's last reported inventory, and pushes seeds, renames and slot selections to connected
+ * turtles.
  */
 class FleetService(
     private val registry: TurtleRegistry,
+    private val sessions: TurtleSessions,
     private val positions: PositionStore,
     private val seeds: SeedStore,
     private val labels: LabelStore,
+    private val inventories: InventoryStore,
     private val clock: () -> Long = { System.currentTimeMillis() / 1000 }
 ) {
     // Starts at the current time in ms so ids stay unique across server restarts
@@ -39,7 +41,7 @@ class FleetService(
         return TurtleStatus(
             turtleId = turtleId,
             label = info?.label,
-            online = info?.let { registry.isOnline(it) } ?: false,
+            online = sessions.isConnected(turtleId),
             lastSeen = info?.lastSeen,
             position = pos,
             pendingSeed = seed,
@@ -47,24 +49,34 @@ class FleetService(
         )
     }
 
-    fun register(request: RegisterRequest): TurtleStatus {
-        val label = request.label?.takeIf { it.isNotBlank() }
-        registry.register(request.turtleId, label)
-        labels.acknowledge(request.turtleId, label)
-        return status(request.turtleId)!!
+    /**
+     * Called when a turtle says hello on a new connection. Replaces any older connection it still has open
+     * (e.g. it rebooted before the server noticed), then sends whatever is waiting for it.
+     */
+    suspend fun connect(hello: Hello, session: WebSocketSession) {
+        val turtleId = hello.turtleId
+        updateLabel(turtleId, hello.label?.takeIf { it.isNotBlank() })
+        sessions.open(turtleId, session)?.close(CloseReason(CloseReason.Codes.NORMAL, "Replaced by a new connection"))
+
+        labels.get(turtleId)?.let { sessions.send(turtleId, encode(RenameMessage(label = it.label))) }
+        seeds.get(turtleId)?.let { sessions.send(turtleId, encode(SeedMessage(seed = it))) }
     }
 
-    /** Returns null if the turtle is unknown (e.g. the server restarted), so it should register again. */
-    fun heartbeat(turtleId: Int): HeartbeatResponse? {
-        if (!registry.touch(turtleId)) return null
-        return HeartbeatResponse(seed = seeds.get(turtleId), label = labels.get(turtleId))
+    fun disconnect(turtleId: Int, session: WebSocketSession) {
+        sessions.close(turtleId, session)
+        registry.recordSeen(turtleId)
+    }
+
+    /** A turtle reports the label it now has, after applying a rename. */
+    fun labelChanged(update: LabelUpdate) {
+        updateLabel(update.turtleId, update.label?.takeIf { it.isNotBlank() })
     }
 
     /**
-     * Queues a position for the turtle to adopt on its next heartbeat. The turtle doesn't need to be
-     * registered yet, so a seed can be set before the turtle is first turned on.
+     * Queues a position for the turtle to adopt, and sends it right away if the turtle is connected. The turtle
+     * doesn't need to be registered yet, so a seed can be set before the turtle is first turned on.
      */
-    fun seed(turtleId: Int, request: SeedRequest): PositionSeed {
+    suspend fun seed(turtleId: Int, request: SeedRequest): PositionSeed {
         val seed = PositionSeed(
             seedId = nextSeedId.incrementAndGet(),
             x = request.x,
@@ -77,17 +89,37 @@ class FleetService(
             ts = clock()
         )
         seeds.put(turtleId, seed)
+        sessions.send(turtleId, encode(SeedMessage(seed = seed)))
         return seed
     }
 
     /**
-     * Queues a rename for the turtle to apply on its next heartbeat (null clears its label). Like seeds,
-     * the turtle doesn't need to be registered yet.
+     * Queues a rename for the turtle (null clears its label), and sends it right away if the turtle is connected.
+     * Like seeds, the turtle doesn't need to be registered yet.
      */
-    fun rename(turtleId: Int, label: String?): TurtleStatus {
+    suspend fun rename(turtleId: Int, label: String?): TurtleStatus {
         labels.put(turtleId, PendingLabel(label = label, ts = clock()))
+        sessions.send(turtleId, encode(RenameMessage(label = label)))
         return status(turtleId)!!
     }
+
+    fun inventory(turtleId: Int): TurtleInventory? = inventories.get(turtleId)
+
+    /** A turtle reports its whole inventory, replacing what was stored. */
+    fun recordInventory(update: InventoryUpdate) {
+        registry.recordSeen(update.turtleId)
+        inventories.put(
+            update.turtleId,
+            TurtleInventory(selectedSlot = update.selectedSlot, slots = update.slots, ts = update.ts)
+        )
+    }
+
+    /**
+     * Tells the turtle to select [slot]. Unlike seeds and renames this isn't queued, since a slot picked while the
+     * turtle is offline would be stale by the time it connects. Returns false if the turtle isn't connected.
+     */
+    suspend fun selectSlot(turtleId: Int, slot: Int): Boolean =
+        sessions.send(turtleId, encode(SelectSlotMessage(slot = slot)))
 
     fun recordPosition(update: PositionUpdate) {
         registry.recordSeen(update.turtleId)
@@ -105,4 +137,11 @@ class FleetService(
             )
         )
     }
+
+    private fun updateLabel(turtleId: Int, label: String?) {
+        registry.setLabel(turtleId, label)
+        labels.acknowledge(turtleId, label)
+    }
+
+    private inline fun <reified T> encode(message: T): String = ProtocolJson.encodeToString(message)
 }

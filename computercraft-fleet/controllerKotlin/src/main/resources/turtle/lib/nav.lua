@@ -11,7 +11,7 @@ local STATE_FILE = "state/nav.json"
 local HEADINGS = { "N", "E", "S", "W" } -- clockwise, so turnRight = +1
 local DELTA = { N = { 0, -1 }, E = { 1, 0 }, S = { 0, 1 }, W = { -1, 0 } } -- {dx, dz} per heading
 
--- {x, y, z, heading, world, dimension, seedId, seedAcked, pending = {move, fuel}}; nil until seeded
+-- {x, y, z, heading, world, dimension, seedId, pending = {move, fuel}}; nil until seeded
 local state = nil
 local changes = 0  -- bumped on every position change
 local reported = 0 -- value of `changes` at the last successful report
@@ -91,7 +91,7 @@ function M.isSeeded()
 end
 
 -- Adopts a seed from the server. Returns false if it's the seed we already applied, because the
--- server keeps sending it until our position report acknowledges it, and we may have moved since.
+-- server resends it on every connect until our position report acknowledges it, and we may have moved since.
 function M.applySeed(seed)
     if state and state.seedId == seed.seedId then
         return false
@@ -104,8 +104,7 @@ function M.applySeed(seed)
         heading = seed.heading,
         world = seed.world,
         dimension = seed.dimension,
-        seedId = seed.seedId,
-        seedAcked = false
+        seedId = seed.seedId
     }
     changes = changes + 1
     save()
@@ -113,7 +112,7 @@ function M.applySeed(seed)
 end
 
 -- Returns a snapshot of the position for reporting, or nil if not seeded.
--- Includes seedId until the server has acknowledged the seed.
+-- Includes the seedId it is based on; the server ignores acks for a seed it no longer has.
 function M.position()
     if not state then
         return nil
@@ -125,7 +124,7 @@ function M.position()
         heading = state.heading,
         world = state.world,
         dimension = state.dimension,
-        seedId = (not state.seedAcked) and state.seedId or nil,
+        seedId = state.seedId,
         changes = changes
     }
 end
@@ -138,10 +137,6 @@ end
 -- Call after a position snapshot was reported successfully.
 function M.markReported(snapshot)
     reported = math.max(reported, snapshot.changes)
-    if snapshot.seedId and snapshot.seedId == state.seedId and not state.seedAcked then
-        state.seedAcked = true
-        save()
-    end
 end
 
 local function move(name, fn)
