@@ -4,6 +4,7 @@ import kotlinx.serialization.Serializable
 import protocol.Protocol
 import protocol.api.InventorySlot
 import protocol.api.PositionSeed
+import protocol.api.TurtleFuel
 
 // Messages sent over /ws/turtle as JSON text frames. Every message has a `type`; see [Protocol.MessageTypes].
 // PositionUpdate (turtle → server) is in its own file.
@@ -37,6 +38,20 @@ data class InventoryUpdate(
     val turtleId: Int,
     val selectedSlot: Int,
     val slots: List<InventorySlot>,
+    val fuel: TurtleFuel? = null,
+    val ts: Long = System.currentTimeMillis() / 1000
+)
+
+/** Sent by a turtle after running a [RefuelMessage], followed by an [InventoryUpdate] with its new fuel level. */
+@Serializable
+data class RefuelResultUpdate(
+    val v: Int = Protocol.VERSION,
+    val type: String = Protocol.MessageTypes.REFUEL_RESULT,
+    val turtleId: Int,
+    val refuelId: Long,
+    val refueled: Boolean,
+    val error: String? = null,
+    val fuelAdded: Int? = null,
     val ts: Long = System.currentTimeMillis() / 1000
 )
 
@@ -46,6 +61,18 @@ data class SelectSlotMessage(
     val v: Int = Protocol.VERSION,
     val type: String = Protocol.MessageTypes.SELECT_SLOT,
     val slot: Int
+)
+
+/**
+ * Server → turtle: burn [count] items from the selected slot as fuel (null burns the whole stack). The turtle replies
+ * with a [RefuelResultUpdate] carrying the same [refuelId].
+ */
+@Serializable
+data class RefuelMessage(
+    val v: Int = Protocol.VERSION,
+    val type: String = Protocol.MessageTypes.REFUEL,
+    val refuelId: Long,
+    val count: Int? = null
 )
 
 /** Server → turtle: adopt this position. Sent until a position update carrying its seedId acknowledges it. */

@@ -6,13 +6,14 @@ import kotlinx.serialization.encodeToString
 import protocol.ProtocolJson
 import protocol.api.*
 import protocol.messages.*
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Combines the registry (labels, last seen), sessions (who is connected), position store (where they are), seed store
  * (positions waiting to be handed to turtles) and label store (pending renames) into the [TurtleStatus] view served by
- * the API, keeps each turtle's last reported inventory, and pushes seeds, renames and slot selections to connected
- * turtles.
+ * the API, keeps each turtle's last reported inventory and refuel, and pushes seeds, renames, slot selections and
+ * refuels to connected turtles.
  */
 class FleetService(
     private val registry: TurtleRegistry,
@@ -25,6 +26,10 @@ class FleetService(
 ) {
     // Starts at the current time in ms so ids stay unique across server restarts
     private val nextSeedId = AtomicLong(System.currentTimeMillis())
+    private val nextRefuelId = AtomicLong(System.currentTimeMillis())
+
+    // Only each turtle's latest refuel, in memory: it's feedback for whoever just asked for it, not history
+    private val lastRefuels = ConcurrentHashMap<Int, RefuelResult>()
 
     fun allStatuses(): List<TurtleStatus> {
         val ids = registry.all().map { it.turtleId } + positions.ids() + seeds.ids() + labels.ids()
@@ -103,14 +108,42 @@ class FleetService(
         return status(turtleId)!!
     }
 
-    fun inventory(turtleId: Int): TurtleInventory? = inventories.get(turtleId)
+    fun inventory(turtleId: Int): TurtleInventory? =
+        inventories.get(turtleId)?.copy(lastRefuel = lastRefuels[turtleId])
 
     /** A turtle reports its whole inventory, replacing what was stored. */
     fun recordInventory(update: InventoryUpdate) {
         registry.recordSeen(update.turtleId)
         inventories.put(
             update.turtleId,
-            TurtleInventory(selectedSlot = update.selectedSlot, slots = update.slots, ts = update.ts)
+            TurtleInventory(
+                selectedSlot = update.selectedSlot,
+                slots = update.slots,
+                fuel = update.fuel,
+                ts = update.ts
+            )
+        )
+    }
+
+    /**
+     * Tells the turtle to burn [count] items from its selected slot (null = the whole stack). Not queued, for the same
+     * reason as [selectSlot]. Returns null if the turtle isn't connected.
+     */
+    suspend fun refuel(turtleId: Int, count: Int?): RefuelCommand? {
+        val command = RefuelCommand(refuelId = nextRefuelId.incrementAndGet(), count = count, ts = clock())
+        val sent = sessions.send(turtleId, encode(RefuelMessage(refuelId = command.refuelId, count = count)))
+        return command.takeIf { sent }
+    }
+
+    /** A turtle reports how a refuel went. */
+    fun recordRefuelResult(update: RefuelResultUpdate) {
+        registry.recordSeen(update.turtleId)
+        lastRefuels[update.turtleId] = RefuelResult(
+            refuelId = update.refuelId,
+            refueled = update.refueled,
+            error = update.error,
+            fuelAdded = update.fuelAdded,
+            ts = update.ts
         )
     }
 

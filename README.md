@@ -111,17 +111,18 @@ The public URL is hard-coded in two places. Update both whenever your tunnel or 
 
 The route paths are defined in `protocol.Protocol.Paths`.
 
-| Method | Path                                   | Returns                                                                                                                                                                           |
-|--------|----------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `GET`  | `/bootstrap/boot.lua`                  | The bootstrap script, as plain text                                                                                                                                               |
-| `GET`  | `/manifest.json`                       | The file manifest (path, SHA-1, entry point)                                                                                                                                      |
-| `GET`  | `/files/{path...}`                     | Any file on the server's classpath under `resources/`, as raw bytes                                                                                                               |
-| `GET`  | `/api/turtles`                         | `TurtleStatus[]` for every known turtle, sorted by ID                                                                                                                             |
-| `GET`  | `/api/turtles/{id}`                    | One `TurtleStatus`, or `404`                                                                                                                                                      |
-| `POST` | `/api/turtles/{id}/seed`               | Takes a `SeedRequest` (`x`, `y`, `z`, `heading`, `world?`, `dimension?`, `source?`) and returns the queued `PositionSeed` with `202`. The turtle doesn't have to be connected yet |
-| `PUT`  | `/api/turtles/{id}/label`              | Takes a `LabelRequest` (`label?`; null or blank clears it, max 32 printable ASCII characters) and returns the turtle's `TurtleStatus` with `202`. See [Renaming](#renaming)       |
-| `GET`  | `/api/turtles/{id}/inventory`          | The turtle's last reported `TurtleInventory`, or `404` if it never reported one. See [Inventory](#inventory)                                                                      |
-| `POST` | `/api/turtles/{id}/inventory/selected` | Takes a `SelectSlotRequest` (`slot`, 1-16) and pushes it to the turtle, returning the request with `202`. `409` if the turtle isn't connected                                     |
+| Method | Path                                   | Returns                                                                                                                                                                                                                                           |
+|--------|----------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `GET`  | `/bootstrap/boot.lua`                  | The bootstrap script, as plain text                                                                                                                                                                                                               |
+| `GET`  | `/manifest.json`                       | The file manifest (path, SHA-1, entry point)                                                                                                                                                                                                      |
+| `GET`  | `/files/{path...}`                     | Any file on the server's classpath under `resources/`, as raw bytes                                                                                                                                                                               |
+| `GET`  | `/api/turtles`                         | `TurtleStatus[]` for every known turtle, sorted by ID                                                                                                                                                                                             |
+| `GET`  | `/api/turtles/{id}`                    | One `TurtleStatus`, or `404`                                                                                                                                                                                                                      |
+| `POST` | `/api/turtles/{id}/seed`               | Takes a `SeedRequest` (`x`, `y`, `z`, `heading`, `world?`, `dimension?`, `source?`) and returns the queued `PositionSeed` with `202`. The turtle doesn't have to be connected yet                                                                 |
+| `PUT`  | `/api/turtles/{id}/label`              | Takes a `LabelRequest` (`label?`; null or blank clears it, max 32 printable ASCII characters) and returns the turtle's `TurtleStatus` with `202`. See [Renaming](#renaming)                                                                       |
+| `GET`  | `/api/turtles/{id}/inventory`          | The turtle's last reported `TurtleInventory`, or `404` if it never reported one. See [Inventory](#inventory)                                                                                                                                      |
+| `POST` | `/api/turtles/{id}/inventory/selected` | Takes a `SelectSlotRequest` (`slot`, 1-16) and pushes it to the turtle, returning the request with `202`. `409` if the turtle isn't connected                                                                                                     |
+| `POST` | `/api/turtles/{id}/refuel`             | Takes a `RefuelRequest` (`count?`, 1-64; null burns the whole selected stack) and pushes it to the turtle, returning a `RefuelCommand` (`refuelId`, `count`, `ts`) with `202`. `409` if the turtle isn't connected. See [Refuelling](#refuelling) |
 
 `/api` responses are JSON. Errors come back as `{"error": "..."}` with status `400`, `404` or `409`. `TurtleStatus` (
 in `protocol.api`) contains `turtleId`, `label`, `online`, `lastSeen`, `position`, `pendingSeed` (a seed the turtle
@@ -155,6 +156,13 @@ curl localhost:8000/api/turtles/7/inventory
 curl -X POST localhost:8000/api/turtles/7/inventory/selected -H "Content-Type: application/json" -d '{"slot":3}'
 ```
 
+Burning 8 items from the selected slot, then the whole stack:
+
+```bash
+curl -X POST localhost:8000/api/turtles/7/refuel -H "Content-Type: application/json" -d '{"count":8}'
+curl -X POST localhost:8000/api/turtles/7/refuel -H "Content-Type: application/json" -d '{"count":null}'
+```
+
 ### Turtle WebSocket (`/ws/turtle`)
 
 Turtles can only make outgoing connections, so the server can't call a turtle directly. Instead each running turtle
@@ -165,9 +173,9 @@ renames as soon as the dashboard sends them. There is no polling.
    closes the connection with `1008`.
 2. The server records the label, replaces any older connection from the same turtle (e.g. it rebooted before the
    old one timed out), then sends any pending `rename` and `seed`.
-3. After that, the turtle sends `position_update`, `label_update` and `inventory_update` messages. The server pushes
-   `seed` and `rename` whenever the API queues one, `select_slot` when the API asks for one, and replies `error` to a
-   message it can't handle (the connection stays open).
+3. After that, the turtle sends `position_update`, `label_update`, `inventory_update` and `refuel_result` messages.
+   The server pushes `seed` and `rename` whenever the API queues one, `select_slot` and `refuel` when the API asks for
+   one, and replies `error` to a message it can't handle (the connection stays open).
 
 The server pings every 15 s and drops a connection after 30 s without a reply. CC: Tweaked answers pings itself. If
 the connection drops, `net.lua` reconnects every 5 s. Anything queued while a turtle is offline stays in
@@ -249,16 +257,18 @@ These are `@Serializable` data classes in `protocol.messages`, sent as JSON text
 encoded with the shared `ProtocolJson` (`ignoreUnknownKeys = true`, `encodeDefaults = true`). Every message has
 `v = Protocol.VERSION` and a `type` from `Protocol.MessageTypes`, which the server uses to decode it:
 
-| Message             | `type`             | Direction       | Fields                                                                                         |
-|---------------------|--------------------|-----------------|------------------------------------------------------------------------------------------------|
-| `Hello`             | `hello`            | turtle → server | `turtleId`, `label?`. Must be the first message                                                |
-| `PositionUpdate`    | `position_update`  | turtle → server | `turtleId`, `x`, `y`, `z`, `heading?` (`N/E/S/W`), `world?`, `dimension?`, `seedId?`, `ts`     |
-| `LabelUpdate`       | `label_update`     | turtle → server | `turtleId`, `label?`: the label the turtle now has                                             |
-| `InventoryUpdate`   | `inventory_update` | turtle → server | `turtleId`, `selectedSlot`, `slots` (`InventorySlot[]`: `slot`, `name`, `count`, `nbt?`), `ts` |
-| `SeedMessage`       | `seed`             | server → turtle | `seed` (a `PositionSeed`)                                                                      |
-| `RenameMessage`     | `rename`           | server → turtle | `label?` (null clears the label)                                                               |
-| `SelectSlotMessage` | `select_slot`      | server → turtle | `slot` (1-16)                                                                                  |
-| `ErrorMessage`      | `error`            | server → turtle | `error`: why the last message was rejected                                                     |
+| Message              | `type`             | Direction       | Fields                                                                                                                       |
+|----------------------|--------------------|-----------------|------------------------------------------------------------------------------------------------------------------------------|
+| `Hello`              | `hello`            | turtle → server | `turtleId`, `label?`. Must be the first message                                                                              |
+| `PositionUpdate`     | `position_update`  | turtle → server | `turtleId`, `x`, `y`, `z`, `heading?` (`N/E/S/W`), `world?`, `dimension?`, `seedId?`, `ts`                                   |
+| `LabelUpdate`        | `label_update`     | turtle → server | `turtleId`, `label?`: the label the turtle now has                                                                           |
+| `InventoryUpdate`    | `inventory_update` | turtle → server | `turtleId`, `selectedSlot`, `slots` (`InventorySlot[]`: `slot`, `name`, `count`, `nbt?`), `fuel?` (`level?`, `limit?`), `ts` |
+| `RefuelResultUpdate` | `refuel_result`    | turtle → server | `turtleId`, `refuelId`, `refueled`, `error?`, `fuelAdded?`, `ts`                                                             |
+| `SeedMessage`        | `seed`             | server → turtle | `seed` (a `PositionSeed`)                                                                                                    |
+| `RenameMessage`      | `rename`           | server → turtle | `label?` (null clears the label)                                                                                             |
+| `SelectSlotMessage`  | `select_slot`      | server → turtle | `slot` (1-16)                                                                                                                |
+| `RefuelMessage`      | `refuel`           | server → turtle | `refuelId`, `count?` (1-64; null burns the whole selected stack)                                                             |
+| `ErrorMessage`       | `error`            | server → turtle | `error`: why the last message was rejected                                                                                   |
 
 ---
 
@@ -320,6 +330,20 @@ seeds and renames, because a selection made while the turtle is offline would li
 an offline turtle gets `409`. The `202` only means the message was sent; the stored inventory shows the new
 `selectedSlot` once the turtle's `inventory_update` arrives.
 
+## Refuelling
+
+Each `inventory_update` also carries the turtle's `fuel`: `level` and `limit` from `turtle.getFuelLevel()` and
+`turtle.getFuelLimit()`, both left out when the server runs with unlimited fuel (`turtleNeedFuel = false`). Older
+turtle code doesn't send it, so `fuel` is null until the turtle updates. Fuel only changes when the turtle moves or
+refuels; nothing moves the turtle yet, so moves don't report it.
+
+`POST /api/turtles/{id}/refuel` sends a `refuel` with a new `refuelId` straight away. Like slot selection it isn't
+queued, so an offline turtle gets `409`. The turtle calls `turtle.refuel(count)` on its selected slot (no count burns
+the whole stack), replies with a `refuel_result` carrying the same `refuelId`, whether it worked, the reason if it
+didn't (e.g. `Items not combustible`) and how much fuel it gained, then sends an `inventory_update`. The server keeps
+each turtle's latest result in memory and returns it as `lastRefuel` from `GET /api/turtles/{id}/inventory`, so
+the dashboard can match it to the refuel it sent.
+
 ## Position storage
 
 `PositionStore` keeps one `TurtlePosition` per `turtleId`. It stores them in a `ConcurrentHashMap` and saves them
@@ -351,6 +375,7 @@ Done:
 - [x] Seed a turtle's position through the API
 - [x] Rename a turtle through the API
 - [x] Read a turtle's inventory and select a slot through the API
+- [x] Report a turtle's fuel and refuel it through the API
 
 Not yet connected:
 

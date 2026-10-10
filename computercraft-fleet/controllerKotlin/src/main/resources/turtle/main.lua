@@ -33,6 +33,30 @@ local function reportInventory()
     end
 end
 
+-- Burns msg.count items from the selected slot (nil = the whole stack) and tells the server how it went.
+local function refuel(msg)
+    local before = turtle.getFuelLevel()
+    -- turtle.refuel returns false and a reason if nothing burned, and errors on a bad count
+    local ok, refueled, reason = pcall(turtle.refuel, msg.count)
+    if not ok then
+        refueled, reason = false, refueled
+    end
+    local after = turtle.getFuelLevel()
+    local added = type(before) == "number" and type(after) == "number" and after - before or nil
+
+    if refueled then
+        print("FUEL: refuelled to " .. tostring(after))
+    else
+        print("FUEL: can't refuel: " .. tostring(reason))
+    end
+    local sent, err = net.reportRefuelResult(msg.refuelId, refueled, not refueled and tostring(reason) or nil, added)
+    if not sent then
+        print("NET: " .. tostring(err))
+    end
+    -- burning items fires turtle_inventory, but report anyway so the fuel level goes out even if nothing burned
+    reportInventory()
+end
+
 local function onConnect()
     reportPosition()
     reportInventory()
@@ -58,6 +82,8 @@ local function onMessage(msg)
             print("NET: can't select slot " .. tostring(msg.slot) .. ": " .. tostring(err))
         end
         reportInventory()
+    elseif msg.type == "refuel" then
+        refuel(msg)
     elseif msg.type == "error" then
         print("NET: server error: " .. tostring(msg.error))
     end
