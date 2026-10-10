@@ -23,6 +23,7 @@ tracking) is in place but not connected yet.
     │       ├── api/
     │       │   ├── TurtleStatus.kt  # TurtleStatus + TurtlePosition (dashboard API)
     │       │   ├── PositionSeed.kt  # SeedRequest + PositionSeed (position seeding)
+    │       │   ├── PendingLabel.kt  # LabelRequest + PendingLabel (renaming turtles)
     │       │   └── ApiError.kt
     │       └── messages/
     │           ├── PositionUpdate.kt
@@ -45,6 +46,7 @@ tracking) is in place but not connected yet.
             │   └── store/
             │       ├── PositionStore.kt   # In-memory + JSON-on-disk turtle positions
             │       ├── SeedStore.kt       # Pending position seeds, saved to disk
+            │       ├── LabelStore.kt      # Pending renames, saved to disk
             │       └── TurtleRegistry.kt  # Label + last-seen per turtle (in memory)
             └── resources/           # Lua code that gets served to turtles
                 ├── startup.lua
@@ -115,13 +117,14 @@ The route paths are defined in `protocol.Protocol.Paths`.
 | `GET`  | `/api/turtles`                | `TurtleStatus[]` for every known turtle, sorted by ID                                                                                                                              |
 | `GET`  | `/api/turtles/{id}`           | One `TurtleStatus`, or `404`                                                                                                                                                       |
 | `POST` | `/api/turtles/{id}/register`  | Takes a `RegisterRequest` JSON body (`turtleId`, `label?`) and returns the turtle's `TurtleStatus`                                                                                 |
-| `POST` | `/api/turtles/{id}/heartbeat` | Refreshes `lastSeen` and returns a `HeartbeatResponse` (with any pending seed), or `404` if the turtle isn't registered (it should register again)                                 |
+| `POST` | `/api/turtles/{id}/heartbeat` | Refreshes `lastSeen` and returns a `HeartbeatResponse` (with any pending seed/rename), or `404` if the turtle isn't registered (it should register again)                          |
 | `POST` | `/api/turtles/{id}/position`  | Takes a `PositionUpdate` JSON body and returns `204`. This is temporary until turtles report over WebSocket                                                                        |
 | `POST` | `/api/turtles/{id}/seed`      | Takes a `SeedRequest` (`x`, `y`, `z`, `heading`, `world?`, `dimension?`, `source?`) and returns the queued `PositionSeed` with `202`. The turtle doesn't have to be registered yet |
+| `PUT`  | `/api/turtles/{id}/label`     | Takes a `LabelRequest` (`label?`; null or blank clears it, max 32 printable ASCII characters) and returns the turtle's `TurtleStatus` with `202`. See [Renaming](#renaming)        |
 
 `/api` responses are JSON. Errors come back as `{"error": "..."}` with status `400` or `404`. `TurtleStatus` (
-in `protocol.api`) contains `turtleId`, `label`, `online`, `lastSeen`, `position` and `pendingSeed` (a seed the turtle
-hasn't applied yet). A turtle counts as online if the
+in `protocol.api`) contains `turtleId`, `label`, `online`, `lastSeen`, `position`, `pendingSeed` (a seed the turtle
+hasn't applied yet) and `pendingLabel` (a rename the turtle hasn't applied yet). A turtle counts as online if the
 server has heard from it in the last 30 seconds.
 
 Example:
@@ -139,6 +142,12 @@ Seeding a turtle's position (what the dashboard will do):
 curl -X POST localhost:8000/api/turtles/7/seed \
      -H "Content-Type: application/json" \
      -d '{"x":10,"y":64,"z":-3,"heading":"N"}'
+```
+
+Renaming a turtle:
+
+```bash
+curl -X PUT localhost:8000/api/turtles/7/label      -H "Content-Type: application/json"      -d '{"label":"Miner 1"}'
 ```
 
 A WebSocket plugin is installed with a 15 s ping and a 30 s timeout, but no WebSocket routes are registered yet.
@@ -165,6 +174,7 @@ entry(SERVER)   -- turtle/main.lua, given the server base URL
    ├─ POST /api/turtles/{id}/register   (label from os.getComputerLabel())
    └─ now, then every 10 s: POST /api/turtles/{id}/heartbeat
           ├─ 404 (server restarted) → register again
+          ├─ response has a rename → os.setComputerLabel(), register again
           ├─ response has a new seed → nav.applySeed()
           └─ position changed → POST /api/turtles/{id}/position
 ```
@@ -220,7 +230,7 @@ shared `ProtocolJson` (`ignoreUnknownKeys = true`, `encodeDefaults = true`):
 |---------------------|-----------------|------------------------------------------------------------------------------------------------------------------------------------------------|
 | `RegisterRequest`   | turtle → server | `v = Protocol.VERSION`, `type = "register"`, `turtleId`, `label?`                                                                              |
 | `PositionUpdate`    | turtle → server | `v = Protocol.VERSION`, `type = "position_update"`, `turtleId`, `x`, `y`, `z`, `heading?` (`N/E/S/W`), `world?`, `dimension?`, `seedId?`, `ts` |
-| `HeartbeatResponse` | server → turtle | `v = Protocol.VERSION`, `type = "heartbeat_ack"`, `seed?` (a `PositionSeed`)                                                                   |
+| `HeartbeatResponse` | server → turtle | `v = Protocol.VERSION`, `type = "heartbeat_ack"`, `seed?` (a `PositionSeed`), `label?` (a `PendingLabel`)                                      |
 
 ---
 
@@ -252,6 +262,20 @@ saved before turning. A shutdown mid-turn can leave the heading off by 90° unti
 
 A turtle that has never been seeded doesn't move: the nav functions return `false, "not seeded"`.
 
+## Renaming
+
+A turtle's name is its ComputerCraft label, and the turtle sends it every time it registers. So the server
+can't simply store a new name, because the next registration would overwrite it. Renames go through the turtle instead:
+
+1. The dashboard sends `PUT /api/turtles/{id}/label`. The server stores a `PendingLabel` in `data/labels.json` and
+   shows it as `pendingLabel` in `TurtleStatus`. A newer rename replaces an older one.
+2. On its next heartbeat, the turtle receives it, calls `os.setComputerLabel`, and registers again.
+3. A registration whose label matches the pending one clears it, and the new `label` shows up in `TurtleStatus`.
+   A registration with any other label (e.g. a turtle that booted before getting the rename) leaves it pending.
+
+Labels are limited to 32 printable ASCII characters because ComputerCraft drops anything else. If it did, the
+turtle's label would never match and the rename would be sent forever.
+
 ## Position storage
 
 `PositionStore` keeps one `TurtlePosition` per `turtleId`. It stores them in a `ConcurrentHashMap` and saves them
@@ -280,6 +304,7 @@ Done:
 - [x] Turtles register after boot and send a heartbeat every 10 s (over HTTP for now)
 - [x] Dead-reckoning position tracking with fuel-based recovery of interrupted moves (no GPS)
 - [x] Seed a turtle's position through the API
+- [x] Rename a turtle through the API
 
 Not yet connected:
 

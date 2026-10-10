@@ -19,10 +19,20 @@ else
     print("NET: " .. tostring(err))
 end
 
--- Runs after every heartbeat: applies a new seed, then reports the position if it changed.
+-- Runs after every heartbeat: applies a rename and a new seed, then reports the position if it changed.
 local function sync(res)
     if not res then
         return -- server unreachable or just re-registered; try again next tick
+    end
+    if res.label then
+        -- re-registering sends the new label, which tells the server the rename was applied
+        os.setComputerLabel(res.label.label)
+        local regOk, regErr = net.register(SERVER)
+        if regOk then
+            print("NET: renamed to " .. (os.getComputerLabel() or "(no label)"))
+        else
+            print("NET: " .. tostring(regErr))
+        end
     end
     if res.seed and nav.applySeed(res.seed) then
         local s = res.seed
