@@ -16,7 +16,7 @@ private const val HELLO_TIMEOUT_MS = 10_000L
 
 /**
  * One connection per running turtle. The turtle opens it (turtles can't accept incoming connections) and sends a
- * [Hello] first; after that the server pushes seeds, renames, slot selections and refuels down the same connection as
+ * [Hello] first; after that the server pushes seeds, renames, slot selections, refuels and commands down the same connection as
  * they happen.
  */
 fun Route.turtleSocketRoutes(fleet: FleetService) {
@@ -64,6 +64,12 @@ private fun handleMessage(fleet: FleetService, turtleId: Int, text: String): Str
 
             Protocol.MessageTypes.REFUEL_RESULT ->
                 handle<RefuelResultUpdate>(json, turtleId, { it.turtleId }) { fleet.recordRefuelResult(it); null }
+
+            Protocol.MessageTypes.EQUIPMENT_UPDATE ->
+                handle<EquipmentUpdate>(json, turtleId, { it.turtleId }) { fleet.recordEquipment(it); null }
+
+            Protocol.MessageTypes.COMMAND_RESULT ->
+                handle<CommandResultUpdate>(json, turtleId, { it.turtleId }) { fleet.recordCommandResult(it); null }
 
             else -> "Unknown message type: $type"
         }

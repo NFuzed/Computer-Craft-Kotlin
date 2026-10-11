@@ -2,6 +2,7 @@ package protocol.messages
 
 import kotlinx.serialization.Serializable
 import protocol.Protocol
+import protocol.api.EquippedUpgrade
 import protocol.api.InventorySlot
 import protocol.api.PositionSeed
 import protocol.api.TurtleFuel
@@ -53,6 +54,49 @@ data class RefuelResultUpdate(
     val error: String? = null,
     val fuelAdded: Int? = null,
     val ts: Long = System.currentTimeMillis() / 1000
+)
+
+/**
+ * Sent by a turtle after each connect and whenever its upgrades change. [itemsKnown] is false on CC: Tweaked versions
+ * without turtle.getEquippedLeft/Right, where [left] and [right] only describe peripheral upgrades.
+ */
+@Serializable
+data class EquipmentUpdate(
+    val v: Int = Protocol.VERSION,
+    val type: String = Protocol.MessageTypes.EQUIPMENT_UPDATE,
+    val turtleId: Int,
+    val left: EquippedUpgrade? = null,
+    val right: EquippedUpgrade? = null,
+    val itemsKnown: Boolean = false,
+    val ts: Long = System.currentTimeMillis() / 1000
+)
+
+/**
+ * Sent by a turtle after running a [CommandMessage]. It reports the position and inventory the command changed first,
+ * so the dashboard already has them when it sees the result.
+ */
+@Serializable
+data class CommandResultUpdate(
+    val v: Int = Protocol.VERSION,
+    val type: String = Protocol.MessageTypes.COMMAND_RESULT,
+    val turtleId: Int,
+    val commandId: Long,
+    val command: String,
+    val success: Boolean,
+    val error: String? = null,
+    val ts: Long = System.currentTimeMillis() / 1000
+)
+
+/**
+ * Server → turtle: run [command] (one of [protocol.api.Commands]). The turtle replies with a [CommandResultUpdate]
+ * carrying the same [commandId].
+ */
+@Serializable
+data class CommandMessage(
+    val v: Int = Protocol.VERSION,
+    val type: String = Protocol.MessageTypes.COMMAND,
+    val commandId: Long,
+    val command: String
 )
 
 /** Server → turtle: select inventory slot [slot] (1..16). The turtle replies with an [InventoryUpdate]. */

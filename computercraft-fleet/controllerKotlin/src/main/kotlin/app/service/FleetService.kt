@@ -12,8 +12,8 @@ import java.util.concurrent.atomic.AtomicLong
 /**
  * Combines the registry (labels, last seen), sessions (who is connected), position store (where they are), seed store
  * (positions waiting to be handed to turtles) and label store (pending renames) into the [TurtleStatus] view served by
- * the API, keeps each turtle's last reported inventory and refuel, and pushes seeds, renames, slot selections and
- * refuels to connected turtles.
+ * the API, keeps each turtle's last reported inventory, equipment, refuel and command, and pushes seeds, renames, slot
+ * selections, refuels and commands to connected turtles.
  */
 class FleetService(
     private val registry: TurtleRegistry,
@@ -22,14 +22,17 @@ class FleetService(
     private val seeds: SeedStore,
     private val labels: LabelStore,
     private val inventories: InventoryStore,
+    private val equipments: EquipmentStore,
     private val clock: () -> Long = { System.currentTimeMillis() / 1000 }
 ) {
     // Starts at the current time in ms so ids stay unique across server restarts
     private val nextSeedId = AtomicLong(System.currentTimeMillis())
     private val nextRefuelId = AtomicLong(System.currentTimeMillis())
+    private val nextCommandId = AtomicLong(System.currentTimeMillis())
 
-    // Only each turtle's latest refuel, in memory: it's feedback for whoever just asked for it, not history
+    // Only each turtle's latest refuel and command, in memory: they're feedback for whoever just asked, not history
     private val lastRefuels = ConcurrentHashMap<Int, RefuelResult>()
+    private val lastCommands = ConcurrentHashMap<Int, CommandResult>()
 
     fun allStatuses(): List<TurtleStatus> {
         val ids = registry.all().map { it.turtleId } + positions.ids() + seeds.ids() + labels.ids()
@@ -50,7 +53,9 @@ class FleetService(
             lastSeen = info?.lastSeen,
             position = pos,
             pendingSeed = seed,
-            pendingLabel = pendingLabel
+            pendingLabel = pendingLabel,
+            equipment = equipments.get(turtleId),
+            lastCommand = lastCommands[turtleId]
         )
     }
 
@@ -125,6 +130,21 @@ class FleetService(
         )
     }
 
+    /** A turtle reports its upgrades, replacing what was stored. */
+    fun recordEquipment(update: EquipmentUpdate) {
+        registry.recordSeen(update.turtleId)
+        equipments.put(
+            update.turtleId,
+            TurtleEquipment(
+                left = update.left,
+                right = update.right,
+                itemsKnown = update.itemsKnown,
+                capabilities = capabilitiesOf(update.left, update.right),
+                ts = update.ts
+            )
+        )
+    }
+
     /**
      * Tells the turtle to burn [count] items from its selected slot (null = the whole stack). Not queued, for the same
      * reason as [selectSlot]. Returns null if the turtle isn't connected.
@@ -143,6 +163,29 @@ class FleetService(
             refueled = update.refueled,
             error = update.error,
             fuelAdded = update.fuelAdded,
+            ts = update.ts
+        )
+    }
+
+    /**
+     * Tells the turtle to run [command] (one of [Commands]). Not queued, for the same reason as [selectSlot]: a move
+     * picked while the turtle is offline could be stale by the time it connects. Returns null if the turtle isn't
+     * connected.
+     */
+    suspend fun sendCommand(turtleId: Int, command: String): TurtleCommand? {
+        val sent = TurtleCommand(commandId = nextCommandId.incrementAndGet(), command = command, ts = clock())
+        val delivered = sessions.send(turtleId, encode(CommandMessage(commandId = sent.commandId, command = command)))
+        return sent.takeIf { delivered }
+    }
+
+    /** A turtle reports how a command went. */
+    fun recordCommandResult(update: CommandResultUpdate) {
+        registry.recordSeen(update.turtleId)
+        lastCommands[update.turtleId] = CommandResult(
+            commandId = update.commandId,
+            command = update.command,
+            success = update.success,
+            error = update.error,
             ts = update.ts
         )
     }
