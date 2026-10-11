@@ -28,39 +28,48 @@ local function writeFile(path, content)
     f.close()
 end
 
--- 1A) Ensure sha1 converter exists
-if not fs.exists(SHA1_CONVERTER_PATH) then
-    local body, err = httpGet(SERVER .. "/files/bootstrap/sha1converter.lua")
-    if not body then
-        error(err)
+local RETRY_DELAY = 5
+
+-- Keep calling fn until it succeeds, so a turtle booted while the server is down waits for it.
+local function retryUntilOk(label, fn)
+    while true do
+        local ok, result = pcall(fn)
+        if ok then
+            return result
+        end
+        print(label .. " failed: " .. tostring(result))
+        print(("Server not ready; retrying in %ds..."):format(RETRY_DELAY))
+        sleep(RETRY_DELAY)
     end
-    writeFile(SHA1_CONVERTER_PATH, body)
 end
 
--- 1B) Ensure updater exists
-if not fs.exists(UPDATER_PATH) then
-    local body, err = httpGet(SERVER .. "/files/bootstrap/updater.lua")
-    if not body then
-        error(err)
+local function ensureFile(path)
+    if fs.exists(path) then
+        return
     end
-    writeFile(UPDATER_PATH, body)
+    retryUntilOk("Download " .. path, function()
+        local body, err = httpGet(SERVER .. "/files/" .. path)
+        if not body then
+            error(err, 0)
+        end
+        writeFile(path, body)
+    end)
 end
+
+-- 1) Ensure sha1 converter and updater exist
+ensureFile(SHA1_CONVERTER_PATH)
+ensureFile(UPDATER_PATH)
 
 -- 2) Run updater (it will update only what changed)
-local ok, entryOrErr = pcall(function()
+local entryPath = retryUntilOk("Updater", function()
     return dofile(UPDATER_PATH).update(MANIFEST_URL, SERVER)
 end)
 
-if not ok then
-    print("Updater error: " .. tostring(entryOrErr))
-    print("Continuing anyway...")
+-- 3) Run entry, passing the server base URL as its argument
+if entryPath and fs.exists(entryPath) then
+    local entry = assert(loadfile(entryPath, nil, _ENV))
+    entry(SERVER)
 else
-    -- 3) Run entry, passing the server base URL as its argument
-    if entryOrErr and fs.exists(entryOrErr) then
-        local entry = assert(loadfile(entryOrErr, nil, _ENV))
-        entry(SERVER)
-    else
-        print("No entry returned; check manifest.")
-    end
+    print("No entry returned; check manifest.")
 end
 
