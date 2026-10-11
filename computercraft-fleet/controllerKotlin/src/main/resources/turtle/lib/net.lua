@@ -1,7 +1,7 @@
 -- turtle/lib/net.lua
 -- Keeps a WebSocket open to the Kotlin server's /ws/turtle. The turtle opens the connection (it can't accept
 -- incoming ones); after that the server pushes seeds, renames and slot selections down it, and we send positions,
--- labels and the inventory up.
+-- labels, the inventory and equipment up.
 local M = {}
 
 local PROTOCOL_VERSION = 1
@@ -70,6 +70,62 @@ function M.reportInventory()
         slots = #slots > 0 and slots or textutils.empty_json_array,
         -- level and limit are left out (null) when fuel is unlimited
         fuel = level == "unlimited" and {} or { level = level, limit = turtle.getFuelLimit() },
+        ts = math.floor(os.epoch("utc") / 1000)
+    })
+end
+
+-- What is equipped on one side: { item = id or nil, peripheralTypes = {...} }, or nil if nothing is.
+-- getEquipped is turtle.getEquippedLeft/Right, which older CC: Tweaked versions don't have; without it we can only
+-- see peripheral upgrades, and an adjacent block's peripheral on that side looks the same as one.
+local function equippedSide(side, getEquipped)
+    local item
+    if getEquipped then
+        local detail = getEquipped()
+        if not detail then
+            -- nothing equipped; a peripheral on this side belongs to the block next to us
+            return nil
+        end
+        item = detail.name
+    end
+    local types = { peripheral.getType(side) }
+    if not item and #types == 0 then
+        return nil
+    end
+    return { item = item, peripheralTypes = types }
+end
+
+-- The turtle's upgrades, as sent in an equipment_update (without type, turtleId or ts).
+function M.equipment()
+    return {
+        left = equippedSide("left", turtle.getEquippedLeft),
+        right = equippedSide("right", turtle.getEquippedRight),
+        itemsKnown = turtle.getEquippedLeft ~= nil
+    }
+end
+
+-- Reports equipment from M.equipment(). The server works out what the turtle can do from it.
+function M.reportEquipment(equipment)
+    local function side(s)
+        -- an empty Lua table would be sent as {}, not []
+        return s and { item = s.item, peripheralTypes = #s.peripheralTypes > 0 and s.peripheralTypes or textutils.empty_json_array }
+    end
+    return M.send({
+        type = "equipment_update",
+        left = side(equipment.left),
+        right = side(equipment.right),
+        itemsKnown = equipment.itemsKnown,
+        ts = math.floor(os.epoch("utc") / 1000)
+    })
+end
+
+-- Tells the server how a command went. err is the turtle API's reason when success is false.
+function M.reportCommandResult(commandId, command, success, err)
+    return M.send({
+        type = "command_result",
+        commandId = commandId,
+        command = command,
+        success = success,
+        error = err,
         ts = math.floor(os.epoch("utc") / 1000)
     })
 end

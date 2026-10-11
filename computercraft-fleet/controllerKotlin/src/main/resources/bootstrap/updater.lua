@@ -42,6 +42,7 @@ function M.update(manifestUrl, serverBase)
     local manifestText, err = httpGet(manifestUrl)
     if not manifestText then
         error(err)
+
     end
 
     local manifest = textutils.unserializeJSON(manifestText)

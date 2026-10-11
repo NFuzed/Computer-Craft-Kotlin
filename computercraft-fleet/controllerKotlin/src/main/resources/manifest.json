@@ -9,15 +9,15 @@
     },
     {
       "path": "bootstrap/updater.lua",
-      "sha1": "330a1b53d33e466e03067d9e28f1a00d2480d165"
+      "sha1": "953d5d511da8724dfd74257c328b0baf98781fd4"
     },
     {
       "path": "turtle/main.lua",
-      "sha1": "c0c0f85a349b9911d6c92750e1f3239f9a5f3349"
+      "sha1": "9cd65078b520f365880fa3b16a860ee297bb4889"
     },
     {
       "path": "turtle/lib/net.lua",
-      "sha1": "1d8fb7ad243613212507a4d625e13cfd5cd10b06"
+      "sha1": "23472c99ed2997782765b2fe670e6bbfb51a1f81"
     },
     {
       "path": "turtle/lib/nav.lua",

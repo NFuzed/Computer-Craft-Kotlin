@@ -10,7 +10,9 @@ data class TurtleStatus(
     val lastSeen: Long? = null,     // unix seconds, null if never seen
     val position: TurtlePosition? = null,
     val pendingSeed: PositionSeed? = null, // seed sent from the dashboard that the turtle hasn't applied yet
-    val pendingLabel: PendingLabel? = null // rename sent from the dashboard that the turtle hasn't applied yet
+    val pendingLabel: PendingLabel? = null, // rename sent from the dashboard that the turtle hasn't applied yet
+    val equipment: TurtleEquipment? = null, // null until the turtle reports it (older turtle code)
+    val lastCommand: CommandResult? = null  // the turtle's latest command since the server started; not saved
 )
 
 @Serializable

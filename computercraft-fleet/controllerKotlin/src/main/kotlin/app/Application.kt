@@ -25,8 +25,13 @@ fun Application.module() {
     val inventoryStore = InventoryStore(
         file = File("data/inventories.json")
     )
+    val equipmentStore = EquipmentStore(
+        file = File("data/equipment.json")
+    )
     val registry = TurtleRegistry()
-    val fleet = FleetService(registry, TurtleSessions(), positionStore, seedStore, labelStore, inventoryStore)
+    val fleet = FleetService(
+        registry, TurtleSessions(), positionStore, seedStore, labelStore, inventoryStore, equipmentStore
+    )
 
     configureRoutes(fleet)
 }
