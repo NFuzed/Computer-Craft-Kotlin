@@ -27,6 +27,7 @@ uses to push position seeds and renames to it the moment the dashboard asks.
     │       │   ├── TurtleEquipment.kt # TurtleEquipment, EquippedUpgrade, Capabilities
     │       │   ├── TurtleCommand.kt # Commands, CommandRequest, TurtleCommand, CommandResult
     │       │   ├── WorldMap.kt      # KnownBlock, MapRegion (world map API)
+    │       │   ├── Station.kt       # StationTypes, StationSides, StationRequest, Station
     │       │   └── ApiError.kt
     │       └── messages/
     │           ├── PositionUpdate.kt
@@ -41,6 +42,7 @@ uses to push position seeds and renames to it the moment the dashboard asks.
         │   │   ├── route/
         │   │   │   ├── Routes.kt          # Registers all routes
         │   │   │   ├── ApiRoutes.kt       # /api/turtles (dashboard REST API)
+        │   │   │   ├── StationRoutes.kt   # /api/stations (fuel, drop and pickup stations)
         │   │   │   ├── TurtleSocketRoutes.kt # /ws/turtle (one WebSocket per running turtle)
         │   │   │   ├── BootstrapRoutes.kt # GET /bootstrap/boot.lua
         │   │   │   ├── ManifestRoutes.kt  # GET /manifest.json
@@ -48,6 +50,8 @@ uses to push position seeds and renames to it the moment the dashboard asks.
         │   │   ├── service/
         │   │   │   ├── FleetService.kt    # Builds TurtleStatus; pushes seeds/renames to connected turtles
         │   │   │   ├── Capabilities.kt    # Works out what a turtle can do from its equipment
+        │   │   │   ├── StationService.kt  # Checks stations and keeps them from overlapping
+        │   │   │   ├── StationCells.kt    # A station's standing cell and chest cell
         │   │   │   └── TurtleSessions.kt  # The open /ws/turtle connection per turtle
         │   │   └── store/
         │   │       ├── Database.kt        # Postgres connection pool, creates the tables, small JDBC helpers
@@ -57,6 +61,7 @@ uses to push position seeds and renames to it the moment the dashboard asks.
         │   │       ├── InventoryStore.kt  # Each turtle's last reported inventory
         │   │       ├── EquipmentStore.kt  # Each turtle's last reported equipment
         │   │       ├── WorldMapStore.kt   # Blocks the turtles have seen (database only, not cached)
+        │   │       ├── StationStore.kt    # Fuel, drop and pickup stations
         │   │       └── TurtleRegistry.kt  # Label + last-seen per turtle (in memory)
         │   └── resources/           # Lua code that gets served to turtles
         │       ├── db/schema.sql    # The tables, created on startup if missing
@@ -75,6 +80,7 @@ uses to push position seeds and renames to it the moment the dashboard asks.
         └── src/test/kotlin/app/
             ├── support/             # TestPostgres, fleetTest and FakeTurtle (see Tests)
             ├── store/               # Store tests against a real Postgres
+            ├── service/             # Tests of plain logic, no database
             └── route/               # Whole-server tests over HTTP and /ws/turtle
 ```
 
@@ -182,21 +188,26 @@ The turtle's Lua code isn't tested yet.
 
 The route paths are defined in `protocol.Protocol.Paths`.
 
-| Method | Path                                   | Returns                                                                                                                                                                                                                                                                                          |
-|--------|----------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `GET`  | `/bootstrap/boot.lua`                  | The bootstrap script, as plain text                                                                                                                                                                                                                                                              |
-| `GET`  | `/manifest.json`                       | The file manifest (path, SHA-1, entry point)                                                                                                                                                                                                                                                     |
-| `GET`  | `/files/{path...}`                     | Any file on the server's classpath under `resources/`, as raw bytes                                                                                                                                                                                                                              |
-| `GET`  | `/api/turtles`                         | `TurtleStatus[]` for every known turtle, sorted by ID                                                                                                                                                                                                                                            |
-| `GET`  | `/api/turtles/{id}`                    | One `TurtleStatus`, or `404`                                                                                                                                                                                                                                                                     |
-| `POST` | `/api/turtles/{id}/seed`               | Takes a `SeedRequest` (`x`, `y`, `z`, `heading`, `world?`, `dimension?`, `source?`) and returns the queued `PositionSeed` with `202`. The turtle doesn't have to be connected yet                                                                                                                |
-| `PUT`  | `/api/turtles/{id}/label`              | Takes a `LabelRequest` (`label?`; null or blank clears it, max 32 printable ASCII characters) and returns the turtle's `TurtleStatus` with `202`. See [Renaming](#renaming)                                                                                                                      |
-| `PUT`  | `/api/turtles/{id}/equipment`          | Takes an `EquipmentSeedRequest` (`left?`, `right?`, each an `EquippedUpgrade`; null is empty) and returns the turtle's `TurtleStatus`. `404` for an unknown turtle. See [Equipment and capabilities](#equipment-and-capabilities)                                                                |
-| `GET`  | `/api/turtles/{id}/inventory`          | The turtle's last reported `TurtleInventory`, or `404` if it never reported one. See [Inventory](#inventory)                                                                                                                                                                                     |
-| `POST` | `/api/turtles/{id}/inventory/selected` | Takes a `SelectSlotRequest` (`slot`, 1-16) and pushes it to the turtle, returning the request with `202`. `409` if the turtle isn't connected                                                                                                                                                    |
-| `POST` | `/api/turtles/{id}/refuel`             | Takes a `RefuelRequest` (`count?`, 1-64; null burns the whole selected stack) and pushes it to the turtle, returning a `RefuelCommand` (`refuelId`, `count`, `ts`) with `202`. `409` if the turtle isn't connected. See [Refuelling](#refuelling)                                                |
-| `POST` | `/api/turtles/{id}/commands`           | Takes a `CommandRequest` (`command`, one of `Commands`) and pushes it to the turtle, returning a `TurtleCommand` (`commandId`, `command`, `ts`) with `202`. `400` for an unknown command, `409` if the turtle isn't connected. See [Commands](#commands)                                         |
-| `GET`  | `/api/map/blocks`                      | Takes `minX`, `minY`, `minZ`, `maxX`, `maxY`, `maxZ` (inclusive, required, at most 256 apart on each axis), optional `world` and `dimension`, and optional `excludeAir` (`true` leaves out known air), and returns a `MapRegion` with every known block in that box. See [World map](#world-map) |
+| Method   | Path                                   | Returns                                                                                                                                                                                                                                                                                          |
+|----------|----------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `GET`    | `/bootstrap/boot.lua`                  | The bootstrap script, as plain text                                                                                                                                                                                                                                                              |
+| `GET`    | `/manifest.json`                       | The file manifest (path, SHA-1, entry point)                                                                                                                                                                                                                                                     |
+| `GET`    | `/files/{path...}`                     | Any file on the server's classpath under `resources/`, as raw bytes                                                                                                                                                                                                                              |
+| `GET`    | `/api/turtles`                         | `TurtleStatus[]` for every known turtle, sorted by ID                                                                                                                                                                                                                                            |
+| `GET`    | `/api/turtles/{id}`                    | One `TurtleStatus`, or `404`                                                                                                                                                                                                                                                                     |
+| `POST`   | `/api/turtles/{id}/seed`               | Takes a `SeedRequest` (`x`, `y`, `z`, `heading`, `world?`, `dimension?`, `source?`) and returns the queued `PositionSeed` with `202`. The turtle doesn't have to be connected yet                                                                                                                |
+| `PUT`    | `/api/turtles/{id}/label`              | Takes a `LabelRequest` (`label?`; null or blank clears it, max 32 printable ASCII characters) and returns the turtle's `TurtleStatus` with `202`. See [Renaming](#renaming)                                                                                                                      |
+| `PUT`    | `/api/turtles/{id}/equipment`          | Takes an `EquipmentSeedRequest` (`left?`, `right?`, each an `EquippedUpgrade`; null is empty) and returns the turtle's `TurtleStatus`. `404` for an unknown turtle. See [Equipment and capabilities](#equipment-and-capabilities)                                                                |
+| `GET`    | `/api/turtles/{id}/inventory`          | The turtle's last reported `TurtleInventory`, or `404` if it never reported one. See [Inventory](#inventory)                                                                                                                                                                                     |
+| `POST`   | `/api/turtles/{id}/inventory/selected` | Takes a `SelectSlotRequest` (`slot`, 1-16) and pushes it to the turtle, returning the request with `202`. `409` if the turtle isn't connected                                                                                                                                                    |
+| `POST`   | `/api/turtles/{id}/refuel`             | Takes a `RefuelRequest` (`count?`, 1-64; null burns the whole selected stack) and pushes it to the turtle, returning a `RefuelCommand` (`refuelId`, `count`, `ts`) with `202`. `409` if the turtle isn't connected. See [Refuelling](#refuelling)                                                |
+| `POST`   | `/api/turtles/{id}/commands`           | Takes a `CommandRequest` (`command`, one of `Commands`) and pushes it to the turtle, returning a `TurtleCommand` (`commandId`, `command`, `ts`) with `202`. `400` for an unknown command, `409` if the turtle isn't connected. See [Commands](#commands)                                         |
+| `GET`    | `/api/map/blocks`                      | Takes `minX`, `minY`, `minZ`, `maxX`, `maxY`, `maxZ` (inclusive, required, at most 256 apart on each axis), optional `world` and `dimension`, and optional `excludeAir` (`true` leaves out known air), and returns a `MapRegion` with every known block in that box. See [World map](#world-map) |
+| `GET`    | `/api/stations`                        | Every `Station`, oldest first; `?type=fuel`, `drop` or `pickup` returns only that type. See [Stations](#stations)                                                                                                                                                                                |
+| `POST`   | `/api/stations`                        | Takes a `StationRequest` and returns the new `Station` with `201`. `400` if it's invalid, `409` if it overlaps another station                                                                                                                                                                   |
+| `GET`    | `/api/stations/{id}`                   | One `Station`, or `404`                                                                                                                                                                                                                                                                          |
+| `PUT`    | `/api/stations/{id}`                   | Takes a `StationRequest` and replaces the station, keeping its id; returns it with `200`. `400`, `404` or `409` as above                                                                                                                                                                         |
+| `DELETE` | `/api/stations/{id}`                   | Deletes the station: `204`, or `404`                                                                                                                                                                                                                                                             |
 
 `/api` responses are JSON. Errors come back as `{"error": "..."}` with status `400`, `404` or `409`. `TurtleStatus` (
 in `protocol.api`) contains `turtleId`, `label`, `online`, `lastSeen`, `position`, `pendingSeed` (a seed the turtle
@@ -489,6 +500,26 @@ curl "localhost:8000/api/map/blocks?minX=0&minY=60&minZ=0&maxX=15&maxY=70&maxZ=1
 
 The pathfinder needs known air, but the dashboard doesn't draw it, so it adds `excludeAir=true` to leave it out.
 
+## Stations
+
+Stations are fixed places, set up from the dashboard, where turtles go to refuel (`fuel`), drop items off (`drop`)
+or pick up items someone has put out for them (`pickup`). They're shared by the whole fleet: a turtle will use the
+nearest station of the type it needs, by path length, once the pathfinder exists.
+
+A `StationRequest` has a `name` (at most 32 printable characters, trimmed), a `type`, the cell the turtle stands in
+(`x`, `y`, `z`, not the chest), optional `world` and `dimension` like a seed, a `side` saying where the chest is from
+there (`up` by default, `down`, or `front`), and a `heading` (`N`, `E`, `S`, `W`) the turtle faces there. The
+heading is required when the chest is in `front`, since that's what puts the chest in front of it.
+
+```bash
+curl -X POST localhost:8000/api/stations -H "Content-Type: application/json"      -d '{"name":"Main fuel","type":"fuel","x":10,"y":64,"z":-3}'
+```
+
+A station's standing cell can't be another station's standing cell or chest (`409`), so a turtle using one station
+never blocks another. Two stations may share a chest, e.g. one turtle above it and one beside it. Stations in another
+`world` or `dimension` never overlap. `StationCells.kt` works out the chest cell (`chestCell`); the pathfinder must
+never dig it. Stations are saved in the `station` table and kept in memory.
+
 ## Equipment and capabilities
 
 So the dashboard knows which commands a turtle can run, each turtle reports what it has equipped as an
@@ -566,6 +597,7 @@ Done:
 - [x] Report a turtle's equipment and what it can do
 - [x] Move, turn, dig, place, drop, suck and attack through the API
 - [x] World map built from the blocks turtles inspect
+- [x] Fuel, drop and pickup stations set up through the API
 
 Not yet connected:
 
