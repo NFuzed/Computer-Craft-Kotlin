@@ -25,6 +25,8 @@ object Protocol {
         const val TURTLE_REFUEL = "/turtles/{id}/refuel"
         const val TURTLE_COMMANDS = "/turtles/{id}/commands"
         const val MAP_BLOCKS = "/map/blocks"
+        const val STATIONS = "/stations"
+        const val STATION = "/stations/{id}"
 
         const val WS_TURTLE = "/ws/turtle"
     }

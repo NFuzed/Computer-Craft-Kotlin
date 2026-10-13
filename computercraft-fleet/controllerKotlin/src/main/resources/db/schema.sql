@@ -219,3 +219,47 @@ CREATE TABLE IF NOT EXISTS world_block
     x
 )
     );
+
+-- Places turtles go to refuel, drop items off or pick them up (StationStore). x, y, z is the cell the turtle stands
+-- in; side ('up', 'down' or 'front') says where the chest is from there, and heading is which way the turtle faces.
+CREATE TABLE IF NOT EXISTS station
+(
+    station_id
+    BIGSERIAL
+    PRIMARY
+    KEY,
+    name
+    TEXT
+    NOT
+    NULL,
+    type
+    TEXT
+    NOT
+    NULL,
+    x
+    INTEGER
+    NOT
+    NULL,
+    y
+    INTEGER
+    NOT
+    NULL,
+    z
+    INTEGER
+    NOT
+    NULL,
+    heading
+    TEXT,
+    side
+    TEXT
+    NOT
+    NULL,
+    world
+    TEXT,
+    dimension
+    TEXT,
+    ts
+    BIGINT
+    NOT
+    NULL
+);
