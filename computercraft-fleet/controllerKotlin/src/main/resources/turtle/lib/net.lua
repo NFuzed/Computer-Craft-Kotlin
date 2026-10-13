@@ -6,6 +6,10 @@ local M = {}
 
 local PROTOCOL_VERSION = 1
 local RETRY_DELAY = 5 -- seconds between reconnect attempts
+-- Reconnect if nothing arrives from the server for this many seconds. The server sends a heartbeat every 10 s
+-- (Protocol.HEARTBEAT_INTERVAL_SECONDS); without one, a connection that died without closing (e.g. the server's PC
+-- went to sleep) would look open forever.
+local WATCHDOG_TIMEOUT = 30
 
 local socket = nil -- the open websocket, or nil while disconnected
 
@@ -144,7 +148,8 @@ end
 
 -- Runs forever: connects, says hello, and hands every message from the server to handlers.onMessage(msg).
 -- handlers.onConnect() runs after each (re)connect, and every other event goes to handlers.onEvent(event, ...). If the connection drops or the server is down, it retries
--- every RETRY_DELAY seconds, so a server outage never crashes the turtle.
+-- every RETRY_DELAY seconds, so a server outage never crashes the turtle. A connection the server has gone quiet on
+-- for WATCHDOG_TIMEOUT seconds counts as dropped.
 function M.run(server, handlers)
     local url = socketUrl(server)
     while true do
@@ -157,16 +162,24 @@ function M.run(server, handlers)
                     handlers.onConnect()
                 end
             end
+            -- restarted on every message, so it only fires after WATCHDOG_TIMEOUT seconds of silence. Restarting also
+            -- covers a turtle command run by onMessage dropping the timer event while it waits.
+            local watchdog = os.startTimer(WATCHDOG_TIMEOUT)
             while socket do
                 local event, eventUrl, arg = os.pullEvent()
                 if eventUrl == url and event == "websocket_message" then
                     local msg = textutils.unserializeJSON(arg)
-                    if type(msg) == "table" and handlers.onMessage then
+                    if type(msg) == "table" and msg.type ~= "heartbeat" and handlers.onMessage then
                         handlers.onMessage(msg)
                     end
+                    watchdog = os.startTimer(WATCHDOG_TIMEOUT)
                 elseif eventUrl == url and event == "websocket_closed" then
                     socket = nil
                     print("NET: disconnected (" .. tostring(arg) .. ")")
+                elseif event == "timer" and eventUrl == watchdog then
+                    pcall(ws.close)
+                    socket = nil
+                    print(("NET: nothing from the server for %d s, reconnecting"):format(WATCHDOG_TIMEOUT))
                 elseif handlers.onEvent then
                     handlers.onEvent(event, eventUrl, arg)
                 end

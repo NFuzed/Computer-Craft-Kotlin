@@ -135,6 +135,16 @@ data class RenameMessage(
     val label: String? = null
 )
 
+/**
+ * Server → turtle, every [Protocol.HEARTBEAT_INTERVAL_SECONDS]. The turtle ignores it, but reconnects if it hears
+ * nothing from the server for a while.
+ */
+@Serializable
+data class HeartbeatMessage(
+    val v: Int = Protocol.VERSION,
+    val type: String = Protocol.MessageTypes.HEARTBEAT
+)
+
 /** Server → turtle: the last message couldn't be handled. The connection stays open. */
 @Serializable
 data class ErrorMessage(
