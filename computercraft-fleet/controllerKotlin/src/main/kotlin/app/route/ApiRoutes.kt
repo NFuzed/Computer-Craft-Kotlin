@@ -163,7 +163,8 @@ private fun Route.commandRoutes(fleet: FleetService) {
 /** The world map the turtles have built up from what they've seen. */
 private fun Route.mapRoutes(fleet: FleetService) {
     // Known blocks in a box: minX..maxX, minY..maxY, minZ..maxZ (inclusive), in the map for world and dimension
-    // (each optional, matching what the turtles were seeded with)
+    // (each optional, matching what the turtles were seeded with). excludeAir=true leaves out known air, which the
+    // dashboard doesn't draw
     get(Protocol.Paths.MAP_BLOCKS) {
         val params = call.request.queryParameters
         val bounds = listOf("minX", "minY", "minZ", "maxX", "maxY", "maxZ").map { name ->
@@ -186,7 +187,12 @@ private fun Route.mapRoutes(fleet: FleetService) {
             )
         }
 
-        call.respond(fleet.mapRegion(MapId(params["world"], params["dimension"]), min, max))
+        val excludeAir = params["excludeAir"]?.let {
+            it.toBooleanStrictOrNull()
+                ?: return@get call.respond(HttpStatusCode.BadRequest, ApiError("excludeAir must be true or false"))
+        } ?: false
+
+        call.respond(fleet.mapRegion(MapId(params["world"], params["dimension"]), min, max, includeAir = !excludeAir))
     }
 }
 
