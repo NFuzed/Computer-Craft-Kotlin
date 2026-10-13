@@ -33,45 +33,49 @@ uses to push position seeds and renames to it the moment the dashboard asks.
     │           └── TurtleMessages.kt # Hello, LabelUpdate, BlockObservations, SeedMessage, RenameMessage, ErrorMessage, HeartbeatMessage
     │
     └── controllerKotlin/            # The Ktor server
-        └── src/main/
-            ├── kotlin/app/
-            │   ├── Main.kt          # Starts Netty on 0.0.0.0:8000
-            │   ├── Application.kt   # Ktor module: plugins, stores, routes
-            │   ├── plugin/WebSockets.kt
-            │   ├── route/
-            │   │   ├── Routes.kt          # Registers all routes
-            │   │   ├── ApiRoutes.kt       # /api/turtles (dashboard REST API)
-            │   │   ├── TurtleSocketRoutes.kt # /ws/turtle (one WebSocket per running turtle)
-            │   │   ├── BootstrapRoutes.kt # GET /bootstrap/boot.lua
-            │   │   ├── ManifestRoutes.kt  # GET /manifest.json
-            │   │   └── FileRoutes.kt      # GET /files/{path...}
-            │   ├── service/
-            │   │   ├── FleetService.kt    # Builds TurtleStatus; pushes seeds/renames to connected turtles
-            │   │   ├── Capabilities.kt    # Works out what a turtle can do from its equipment
-            │   │   └── TurtleSessions.kt  # The open /ws/turtle connection per turtle
-            │   └── store/
-            │       ├── Database.kt        # Postgres connection pool, creates the tables, small JDBC helpers
-            │       ├── PositionStore.kt   # Each turtle's last position
-            │       ├── SeedStore.kt       # Pending position seeds
-            │       ├── LabelStore.kt      # Pending renames
-            │       ├── InventoryStore.kt  # Each turtle's last reported inventory
-            │       ├── EquipmentStore.kt  # Each turtle's last reported equipment
-            │       ├── WorldMapStore.kt   # Blocks the turtles have seen (database only, not cached)
-            │       └── TurtleRegistry.kt  # Label + last-seen per turtle (in memory)
-            └── resources/           # Lua code that gets served to turtles
-                ├── db/schema.sql    # The tables, created on startup if missing
-                ├── startup.lua
-                ├── manifest.template.json
-                ├── manifest.json    # Generated; do not edit by hand
-                ├── bootstrap/
-                │   ├── boot.lua
-                │   ├── updater.lua
-                │   └── sha1converter.lua
-                └── turtle/
-                    ├── main.lua     # Entry program: connects, then handles seeds and renames
-                    └── lib/
-                        ├── net.lua  # WebSocket connection to /ws/turtle (reconnects on drop)
-                        └── nav.lua  # Dead-reckoning position tracking (no GPS), and the cells around the turtle
+        ├── src/main/
+        │   ├── kotlin/app/
+        │   │   ├── Main.kt          # Starts Netty on 0.0.0.0:8000
+        │   │   ├── Application.kt   # Ktor module: plugins, stores, routes
+        │   │   ├── plugin/WebSockets.kt
+        │   │   ├── route/
+        │   │   │   ├── Routes.kt          # Registers all routes
+        │   │   │   ├── ApiRoutes.kt       # /api/turtles (dashboard REST API)
+        │   │   │   ├── TurtleSocketRoutes.kt # /ws/turtle (one WebSocket per running turtle)
+        │   │   │   ├── BootstrapRoutes.kt # GET /bootstrap/boot.lua
+        │   │   │   ├── ManifestRoutes.kt  # GET /manifest.json
+        │   │   │   └── FileRoutes.kt      # GET /files/{path...}
+        │   │   ├── service/
+        │   │   │   ├── FleetService.kt    # Builds TurtleStatus; pushes seeds/renames to connected turtles
+        │   │   │   ├── Capabilities.kt    # Works out what a turtle can do from its equipment
+        │   │   │   └── TurtleSessions.kt  # The open /ws/turtle connection per turtle
+        │   │   └── store/
+        │   │       ├── Database.kt        # Postgres connection pool, creates the tables, small JDBC helpers
+        │   │       ├── PositionStore.kt   # Each turtle's last position
+        │   │       ├── SeedStore.kt       # Pending position seeds
+        │   │       ├── LabelStore.kt      # Pending renames
+        │   │       ├── InventoryStore.kt  # Each turtle's last reported inventory
+        │   │       ├── EquipmentStore.kt  # Each turtle's last reported equipment
+        │   │       ├── WorldMapStore.kt   # Blocks the turtles have seen (database only, not cached)
+        │   │       └── TurtleRegistry.kt  # Label + last-seen per turtle (in memory)
+        │   └── resources/           # Lua code that gets served to turtles
+        │       ├── db/schema.sql    # The tables, created on startup if missing
+        │       ├── startup.lua
+        │       ├── manifest.template.json
+        │       ├── manifest.json    # Generated; do not edit by hand
+        │       ├── bootstrap/
+        │       │   ├── boot.lua
+        │       │   ├── updater.lua
+        │       │   └── sha1converter.lua
+        │       └── turtle/
+        │           ├── main.lua     # Entry program: connects, then handles seeds and renames
+        │           └── lib/
+        │               ├── net.lua  # WebSocket connection to /ws/turtle (reconnects on drop)
+        │               └── nav.lua  # Dead-reckoning position tracking (no GPS), and the cells around the turtle
+        └── src/test/kotlin/app/
+            ├── support/             # TestPostgres, fleetTest and FakeTurtle (see Tests)
+            ├── store/               # Store tests against a real Postgres
+            └── route/               # Whole-server tests over HTTP and /ws/turtle
 ```
 
 Gradle builds everything as **one module**. The root `build.gradle.kts` adds the `protocol` and `controllerKotlin`
@@ -136,6 +140,41 @@ The public URL is hard-coded in two places. Update both whenever your tunnel or 
 |------------------------------------|--------------------------------------|
 | `resources/startup.lua`            | `BASE`                               |
 | `resources/manifest.template.json` | `baseUrl` (keep the `/files` suffix) |
+
+---
+
+## Tests
+
+```bash
+./gradlew test
+```
+
+The tests need no database setup. They start their own Postgres from binaries Gradle downloads
+([zonky embedded-postgres](https://github.com/zonkyio/embedded-postgres)), separate from the server's database, with
+no install or Docker needed. Starting it takes about 10 s per run; after that each test takes well under a second.
+It's stopped when the tests finish. The helpers are in `controllerKotlin/src/test/kotlin/app/support/`:
+
+- **`withDatabase { db -> }`** gives a test its own empty database with the schema created, for testing a store on
+  its own.
+- **`fleetTest { }`** runs the whole server (routes, WebSockets, services and stores) in memory on a fresh database.
+  Nothing listens on a real port, so it doesn't clash with a server you're running. `client` calls the API.
+- **`turtle(id) { }`**, inside a `fleetTest`, connects a `FakeTurtle` and says hello. It sends protocol messages,
+  `receive`s what the server pushes (skipping heartbeats), and `sync()` waits until the server has handled everything
+  sent so far.
+
+```kotlin
+@Test
+fun `blocks a turtle observes show up in the map`() = fleetTest {
+        turtle(7) {
+            send(BlockObservations(turtleId = 7, blocks = listOf(ObservedBlock(1, 64, 0, "minecraft:stone"))))
+            sync()
+        }
+        val region = client.get("/api/map/blocks?minX=0&minY=60&minZ=0&maxX=5&maxY=70&maxZ=5").body<MapRegion>()
+        assertEquals(listOf("minecraft:stone"), region.blocks.map { it.name })
+    }
+```
+
+The turtle's Lua code isn't tested yet.
 
 ---
 
