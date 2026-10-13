@@ -12,8 +12,8 @@ import java.util.concurrent.atomic.AtomicLong
 /**
  * Combines the registry (labels, last seen), sessions (who is connected), position store (where they are), seed store
  * (positions waiting to be handed to turtles) and label store (pending renames) into the [TurtleStatus] view served by
- * the API, keeps each turtle's last reported inventory, equipment, refuel and command, and pushes seeds, renames, slot
- * selections, refuels and commands to connected turtles.
+ * the API, keeps each turtle's last reported inventory, equipment, refuel and command, adds the blocks turtles see to
+ * the world map, and pushes seeds, renames, slot selections, refuels and commands to connected turtles.
  */
 class FleetService(
     private val registry: TurtleRegistry,
@@ -23,6 +23,7 @@ class FleetService(
     private val labels: LabelStore,
     private val inventories: InventoryStore,
     private val equipments: EquipmentStore,
+    private val worldMap: WorldMapStore,
     private val clock: () -> Long = { System.currentTimeMillis() / 1000 }
 ) {
     // Starts at the current time in ms so ids stay unique across server restarts
@@ -213,6 +214,21 @@ class FleetService(
             )
         )
     }
+
+    /** A turtle reports the blocks around it; they replace what the world map knew about those cells. */
+    fun recordBlocks(update: BlockObservations) {
+        registry.recordSeen(update.turtleId)
+        worldMap.record(
+            MapId(update.world, update.dimension),
+            update.blocks.map {
+                KnownBlock(x = it.x, y = it.y, z = it.z, name = it.name, turtleId = update.turtleId, ts = update.ts)
+            }
+        )
+    }
+
+    /** The known blocks in the box from [min] to [max], both inclusive. */
+    fun mapRegion(id: MapId, min: BlockPos, max: BlockPos): MapRegion =
+        MapRegion(world = id.world, dimension = id.dimension, blocks = worldMap.region(id, min, max))
 
     private fun updateLabel(turtleId: Int, label: String?) {
         registry.setLabel(turtleId, label)

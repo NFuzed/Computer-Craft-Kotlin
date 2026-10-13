@@ -1,6 +1,8 @@
 package app.route
 
 import app.service.FleetService
+import app.store.BlockPos
+import app.store.MapId
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.request.*
@@ -16,6 +18,7 @@ fun Route.apiRoutes(fleet: FleetService) {
         turtleRoutes(fleet)
         inventoryRoutes(fleet)
         commandRoutes(fleet)
+        mapRoutes(fleet)
     }
 }
 
@@ -154,6 +157,36 @@ private fun Route.commandRoutes(fleet: FleetService) {
             ?: return@post call.respond(HttpStatusCode.Conflict, ApiError("Turtle $id is not connected"))
 
         call.respond(HttpStatusCode.Accepted, command)
+    }
+}
+
+/** The world map the turtles have built up from what they've seen. */
+private fun Route.mapRoutes(fleet: FleetService) {
+    // Known blocks in a box: minX..maxX, minY..maxY, minZ..maxZ (inclusive), in the map for world and dimension
+    // (each optional, matching what the turtles were seeded with)
+    get(Protocol.Paths.MAP_BLOCKS) {
+        val params = call.request.queryParameters
+        val bounds = listOf("minX", "minY", "minZ", "maxX", "maxY", "maxZ").map { name ->
+            params[name]?.toIntOrNull() ?: return@get call.respond(
+                HttpStatusCode.BadRequest,
+                ApiError("$name is required and must be an integer")
+            )
+        }
+        val min = BlockPos(bounds[0], bounds[1], bounds[2])
+        val max = BlockPos(bounds[3], bounds[4], bounds[5])
+
+        val spans = listOf(max.x.toLong() - min.x, max.y.toLong() - min.y, max.z.toLong() - min.z)
+        if (spans.any { it < 0 }) {
+            return@get call.respond(HttpStatusCode.BadRequest, ApiError("Each min must be at most its max"))
+        }
+        if (spans.any { it >= MAX_MAP_QUERY_SPAN }) {
+            return@get call.respond(
+                HttpStatusCode.BadRequest,
+                ApiError("The box can be at most $MAX_MAP_QUERY_SPAN blocks along each axis")
+            )
+        }
+
+        call.respond(fleet.mapRegion(MapId(params["world"], params["dimension"]), min, max))
     }
 }
 

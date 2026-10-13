@@ -87,6 +87,31 @@ data class CommandResultUpdate(
     val ts: Long = System.currentTimeMillis() / 1000
 )
 
+/** One block a turtle inspected, at world coordinates worked out from its dead-reckoned position and heading. */
+@Serializable
+data class ObservedBlock(
+    val x: Int,
+    val y: Int,
+    val z: Int,
+    val name: String                // block id, or protocol.api.AIR if nothing was there
+)
+
+/**
+ * Sent by a turtle after it connects, is seeded or runs a command: the blocks in front of, above and below it, from
+ * turtle.inspect, inspectUp and inspectDown. The server adds them to its world map, replacing what it knew about
+ * those cells.
+ */
+@Serializable
+data class BlockObservations(
+    val v: Int = Protocol.VERSION,
+    val type: String = Protocol.MessageTypes.BLOCK_OBSERVATIONS,
+    val turtleId: Int,
+    val world: String? = null,
+    val dimension: String? = null,
+    val blocks: List<ObservedBlock>,
+    val ts: Long = System.currentTimeMillis() / 1000
+)
+
 /**
  * Server → turtle: run [command] (one of [protocol.api.Commands]). The turtle replies with a [CommandResultUpdate]
  * carrying the same [commandId].
