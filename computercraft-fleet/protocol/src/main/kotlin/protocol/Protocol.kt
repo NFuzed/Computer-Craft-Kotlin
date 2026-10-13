@@ -24,6 +24,7 @@ object Protocol {
         const val TURTLE_SELECTED_SLOT = "/turtles/{id}/inventory/selected"
         const val TURTLE_REFUEL = "/turtles/{id}/refuel"
         const val TURTLE_COMMANDS = "/turtles/{id}/commands"
+        const val TURTLE_GOTO = "/turtles/{id}/goto"
         const val MAP_BLOCKS = "/map/blocks"
         const val STATIONS = "/stations"
         const val STATION = "/stations/{id}"
@@ -42,6 +43,7 @@ object Protocol {
         const val EQUIPMENT_UPDATE = "equipment_update"
         const val COMMAND_RESULT = "command_result"
         const val BLOCK_OBSERVATIONS = "block_observations"
+        const val PATH_RESULT = "path_result"
 
         // server → turtle
         const val SEED = "seed"
@@ -49,6 +51,8 @@ object Protocol {
         const val SELECT_SLOT = "select_slot"
         const val REFUEL = "refuel"
         const val COMMAND = "command"
+        const val PATH = "path"
+        const val PATH_CANCEL = "path_cancel"
         const val ERROR = "error"
         const val HEARTBEAT = "heartbeat"
     }

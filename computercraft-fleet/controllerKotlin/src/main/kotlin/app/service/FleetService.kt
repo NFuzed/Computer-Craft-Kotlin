@@ -235,6 +235,11 @@ class FleetService(
                 to = MapId(update.world, update.dimension)
             )
         }
+        // the turtle is standing there, so it's open: worth knowing for guessing what's around it
+        worldMap.record(
+            MapId(update.world, update.dimension),
+            listOf(KnownBlock(update.x, update.y, update.z, AIR, turtleId = update.turtleId, ts = update.ts))
+        )
         positions.upsert(
             update.turtleId,
             TurtlePosition(
@@ -249,13 +254,17 @@ class FleetService(
         )
     }
 
-    /** A turtle reports the blocks around it; they replace what the world map knew about those cells. */
+    /**
+     * A turtle reports the blocks around it; they replace what the world map knew about those cells. Another turtle is
+     * stored as the air it stands in: it will move, and the server tracks turtles by their positions instead.
+     */
     fun recordBlocks(update: BlockObservations) {
         registry.recordSeen(update.turtleId)
         worldMap.record(
             MapId(update.world, update.dimension),
             update.blocks.map {
-                KnownBlock(x = it.x, y = it.y, z = it.z, name = it.name, turtleId = update.turtleId, ts = update.ts)
+                val name = if (it.name.startsWith(TURTLE_BLOCK_PREFIX)) AIR else it.name
+                KnownBlock(x = it.x, y = it.y, z = it.z, name = name, turtleId = update.turtleId, ts = update.ts)
             }
         )
     }
@@ -270,4 +279,9 @@ class FleetService(
     }
 
     private inline fun <reified T> encode(message: T): String = ProtocolJson.encodeToString(message)
+
+    private companion object {
+        /** computercraft:turtle_normal and computercraft:turtle_advanced, as turtle.inspect names them. */
+        const val TURTLE_BLOCK_PREFIX = "computercraft:turtle"
+    }
 }

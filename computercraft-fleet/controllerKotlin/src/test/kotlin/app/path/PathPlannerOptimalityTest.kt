@@ -109,7 +109,7 @@ class PathPlannerOptimalityTest {
             val cost = when {
                 block == null && !world.probablySolid(cell) -> costs.move + costs.unseen
                 block == null && mayDig -> costs.move + costs.unseen + dig
-                block == null -> costs.move + costs.unseen + costs.digHorizontal
+                block == null -> costs.move + costs.unseen + costs.unseenNoDig
                 block == AIR || block == "minecraft:water" -> costs.move
                 block == "minecraft:chest" || !mayDig -> return
                 else -> costs.move + dig

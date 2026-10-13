@@ -22,13 +22,18 @@ data class PathCosts(
     val turn: Double = 0.5,             // free on fuel, but takes as long as a move
     val digVertical: Double = 2.0,      // extra, on top of the move, to dig up or down first
     val digHorizontal: Double = 11.0,   // extra, on top of the move, to dig in front first
+    val unseenNoDig: Double = 4.0,      // extra for an unseen cell that's probably solid but can't be dug: a guess, so
+    // allowed, but only when known ways are much longer. Big values slow searches
     val unseen: Double = 0.01,          // extra for a cell nobody has seen, so known air wins a tie. Small, since
     // the heuristic can't count it: a bigger one makes long searches crawl
     val back: Double = 0.1              // extra for backing up, so facing where it goes (and seeing it) wins a tie
 ) {
     init {
         // the heuristic counts each remaining block as at least one move, which must not overestimate
-        require(move > 0 && turn >= 0 && digVertical >= 0 && digHorizontal >= 0 && unseen >= 0 && back >= 0)
+        require(
+            move > 0 && turn >= 0 && digVertical >= 0 && digHorizontal >= 0 && unseenNoDig >= 0 && unseen >= 0 &&
+                    back >= 0
+        )
     }
 }
 
@@ -135,30 +140,28 @@ class PathPlanner(private val world: WorldView, private val costs: PathCosts = P
             val h = heading.ordinal
             val dx = heading.delta.x
             val dz = heading.delta.z
-            relax(cost, costs.turn, x, y, z, heading.left.ordinal, PathAction.TURN_LEFT, false)
-            relax(cost, costs.turn, x, y, z, heading.right.ordinal, PathAction.TURN_RIGHT, false)
-            // arguments are evaluated in order, so lastDig is read after enter() has set it
-            val forward = enter(x + dx, y, z + dz, costs.digHorizontal)
-            relax(cost, forward, x + dx, y, z + dz, h, PathAction.FORWARD, lastDig)
-            relax(cost, enter(x, y + 1, z, costs.digVertical), x, y + 1, z, h, PathAction.UP, lastDig)
-            relax(cost, enter(x, y - 1, z, costs.digVertical), x, y - 1, z, h, PathAction.DOWN, lastDig)
-            relax(cost, back(x - dx, y, z - dz), x - dx, y, z - dz, h, PathAction.BACK, false)
+            relax(cost + costs.turn, x, y, z, heading.left.ordinal, PathAction.TURN_LEFT, false)
+            relax(cost + costs.turn, x, y, z, heading.right.ordinal, PathAction.TURN_RIGHT, false)
+            // enter() and back() return NaN for a step that isn't possible, which stays NaN when added to. Arguments are
+            // evaluated in order, so lastDig is read after enter() has set it
+            val forward = cost + enter(x + dx, y, z + dz, costs.digHorizontal)
+            relax(forward, x + dx, y, z + dz, h, PathAction.FORWARD, lastDig)
+            relax(cost + enter(x, y + 1, z, costs.digVertical), x, y + 1, z, h, PathAction.UP, lastDig)
+            relax(cost + enter(x, y - 1, z, costs.digVertical), x, y - 1, z, h, PathAction.DOWN, lastDig)
+            relax(cost + back(x - dx, y, z - dz), x - dx, y, z - dz, h, PathAction.BACK, false)
         }
 
         /**
-         * Records reaching the state by [action], for [cost] plus [stepCost], if that's cheaper than before, and queues
-         * it. A NaN [stepCost] means the step isn't possible.
+         * Records reaching the state by [action] for [cost] in all, if that's cheaper than before, and queues it. A NaN
+         * [cost] means the step isn't possible.
          */
-        private fun relax(
-            cost: Double, stepCost: Double, x: Int, y: Int, z: Int, heading: Int, action: PathAction, dig: Boolean
-        ) {
-            if (stepCost.isNaN()) return
-            val total = cost + stepCost
+        private fun relax(cost: Double, x: Int, y: Int, z: Int, heading: Int, action: PathAction, dig: Boolean) {
+            if (cost.isNaN()) return
             val key = key(x, y, z, heading)
             val slot = table.slot(key)
-            if (table.isDone(slot) || total >= table.cost(slot)) return
-            table.reach(slot, total, action.ordinal, dig)
-            open.push(total + heuristic(x, y, z), total, key)
+            if (table.isDone(slot) || cost >= table.cost(slot)) return
+            table.reach(slot, cost, action.ordinal, dig)
+            open.push(cost + heuristic(x, y, z), cost, key)
         }
 
         /** Packs a state. Only called for cells inside the bounds, so every key is non-negative. */
@@ -197,8 +200,8 @@ class PathPlanner(private val world: WorldView, private val costs: PathCosts = P
                     when {
                         !world.probablySolid(cell) -> unseen
                         mayDig -> unseen + digCost.also { lastDig = true }
-                        // can't dig it, but it might be air after all: allowed, but only when nothing else works
-                        else -> unseen + costs.digHorizontal
+                        // can't dig it, but it might be air after all: allowed, but known ways are preferred
+                        else -> unseen + costs.unseenNoDig
                     }
                 }
 

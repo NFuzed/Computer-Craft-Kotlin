@@ -41,6 +41,7 @@ uses to push position seeds and renames to it the moment the dashboard asks.
         │   │   ├── plugin/WebSockets.kt
         │   │   ├── path/
         │   │   │   ├── PathPlanner.kt     # A* route planning (costs, rules, results)
+        │   │   │   ├── KnownWorld.kt      # The world map as the planner sees it, with guesses for unseen cells
         │   │   │   ├── SearchTables.kt    # Primitive hash table and heap for the search
         │   │   │   ├── BlockRules.kt      # Which blocks are open, and which are never dug or entered
         │   │   │   └── Geometry.kt        # Heading, Pose, Box
@@ -48,6 +49,7 @@ uses to push position seeds and renames to it the moment the dashboard asks.
         │   │   │   ├── Routes.kt          # Registers all routes
         │   │   │   ├── ApiRoutes.kt       # /api/turtles (dashboard REST API)
         │   │   │   ├── StationRoutes.kt   # /api/stations (fuel, drop and pickup stations)
+        │   │   │   ├── GotoRoutes.kt      # /api/turtles/{id}/goto (send a turtle somewhere)
         │   │   │   ├── TurtleSocketRoutes.kt # /ws/turtle (one WebSocket per running turtle)
         │   │   │   ├── BootstrapRoutes.kt # GET /bootstrap/boot.lua
         │   │   │   ├── ManifestRoutes.kt  # GET /manifest.json
@@ -56,6 +58,7 @@ uses to push position seeds and renames to it the moment the dashboard asks.
         │   │   │   ├── FleetService.kt    # Builds TurtleStatus; pushes seeds/renames to connected turtles
         │   │   │   ├── Capabilities.kt    # Works out what a turtle can do from its equipment
         │   │   │   ├── StationService.kt  # Checks stations and keeps them from overlapping
+        │   │   │   ├── TripService.kt     # Plans, sends and replans turtles' trips
         │   │   │   ├── StationCells.kt    # A station's standing cell and chest cell
         │   │   │   └── TurtleSessions.kt  # The open /ws/turtle connection per turtle
         │   │   └── store/
@@ -83,7 +86,7 @@ uses to push position seeds and renames to it the moment the dashboard asks.
         │               ├── net.lua  # WebSocket connection to /ws/turtle (reconnects on drop)
         │               └── nav.lua  # Dead-reckoning position tracking (no GPS), and the cells around the turtle
         └── src/test/kotlin/app/
-            ├── support/             # TestPostgres, fleetTest and FakeTurtle (see Tests)
+            ├── support/             # TestPostgres, fleetTest, FakeTurtle, SimWorld and SimTurtle (see Tests)
             ├── store/               # Store tests against a real Postgres
             ├── service/             # Tests of plain logic, no database
             ├── path/                # Pathfinding tests on worlds drawn as text (GridWorld)
@@ -173,6 +176,13 @@ It's stopped when the tests finish. The helpers are in `controllerKotlin/src/tes
 - **`turtle(id) { }`**, inside a `fleetTest`, connects a `FakeTurtle` and says hello. It sends protocol messages,
   `receive`s what the server pushes (skipping heartbeats), and `sync()` waits until the server has handled everything
   sent so far.
+- **`SimWorld`** is a world drawn as text (`.` air, `#` stone, `~` water, `C` chest, `B` bedrock, one `y=N` layer at a
+  time; everything outside the drawing is stone) that turtles move and dig in. The server only learns it from what
+  turtles report, as in Minecraft.
+- **`simTurtle(id, world, start, canDig, fuel, stepDelayMs)`** puts a `SimTurtle` in a `SimWorld` and connects it.
+  It does what `main.lua` does with paths: runs each step (digging first when told to), reports its position and the
+  blocks around it after each one, stops when a move fails, and sends a `path_result`. Turtles are solid to each
+  other. `goto(...)`, `trip(id)` and `awaitTrip(id)` drive and follow trips.
 
 ```kotlin
 @Test
@@ -186,7 +196,21 @@ fun `blocks a turtle observes show up in the map`() = fleetTest {
     }
 ```
 
-The turtle's Lua code isn't tested yet.
+```kotlin
+@Test
+fun `with a pickaxe and no way round, it digs through`() = fleetTest {
+        val world = SimWorld.parse("y=70\n..#..")
+        val turtle = simTurtle(7, world, at(0, 70, 0, E), canDig = true)
+
+        goto(7, 4, 70, 0)
+
+        assertEquals(TripStatuses.ARRIVED, awaitTrip(7).status)
+        assertEquals(BlockPos(4, 70, 0), turtle.pose.pos)
+        assertEquals(AIR, world.terrainAt(BlockPos(2, 70, 0)))
+    }
+```
+
+The turtle's Lua code itself isn't tested; `SimTurtle` follows the same rules, so keep the two in step.
 
 ---
 
@@ -210,6 +234,9 @@ The route paths are defined in `protocol.Protocol.Paths`.
 | `POST`   | `/api/turtles/{id}/commands`           | Takes a `CommandRequest` (`command`, one of `Commands`) and pushes it to the turtle, returning a `TurtleCommand` (`commandId`, `command`, `ts`) with `202`. `400` for an unknown command, `409` if the turtle isn't connected. See [Commands](#commands)                                         |
 | `GET`    | `/api/map/blocks`                      | Takes `minX`, `minY`, `minZ`, `maxX`, `maxY`, `maxZ` (inclusive, required, at most 256 apart on each axis), optional `world` and `dimension`, and optional `excludeAir` (`true` leaves out known air), and returns a `MapRegion` with every known block in that box. See [World map](#world-map) |
 | `GET`    | `/api/stations`                        | Every `Station`, oldest first; `?type=fuel`, `drop` or `pickup` returns only that type. See [Stations](#stations)                                                                                                                                                                                |
+| `POST`   | `/api/turtles/{id}/goto`               | Takes a `GotoRequest` (`x`, `y`, `z`, `heading?`), plans a path and sends it, returning the `Trip` with `202`. `400` for a bad heading, `409` if the turtle isn't connected or has no position, `422` if there's no path or not enough fuel. See [Goto](#goto)                                   |
+| `GET`    | `/api/turtles/{id}/goto`               | The turtle's current or last `Trip`, or `404`                                                                                                                                                                                                                                                    |
+| `DELETE` | `/api/turtles/{id}/goto`               | Cancels the trip in progress: the turtle stops after its current step. Returns the `Trip` with `202`, or `404`                                                                                                                                                                                   |
 | `POST`   | `/api/stations`                        | Takes a `StationRequest` and returns the new `Station` with `201`. `400` if it's invalid, `409` if it overlaps another station                                                                                                                                                                   |
 | `GET`    | `/api/stations/{id}`                   | One `Station`, or `404`                                                                                                                                                                                                                                                                          |
 | `PUT`    | `/api/stations/{id}`                   | Takes a `StationRequest` and replaces the station, keeping its id; returns it with `200`. `400`, `404` or `409` as above                                                                                                                                                                         |
@@ -267,9 +294,10 @@ renames as soon as the dashboard sends them. There is no polling.
 2. The server records the label, replaces any older connection from the same turtle (e.g. it rebooted before the
    old one timed out), then sends any pending `rename` and `seed`.
 3. After that, the turtle sends `position_update`, `label_update`, `inventory_update`, `equipment_update`,
-   `refuel_result`, `command_result` and `block_observations` messages.
+   `refuel_result`, `command_result`, `block_observations` and `path_result` messages.
    The server pushes `seed` and `rename` whenever the API queues one, `select_slot`, `refuel` and `command` when the
-   API asks for one, replies `error` to a message it can't handle (the connection stays open), and sends a
+   API asks for one, `path` and `path_cancel` for trips, replies `error` to a message it can't handle (the connection
+   stays open), and sends a
    `heartbeat` every 10 s.
 
 The server pings every 15 s and drops a connection after 30 s without a reply. CC: Tweaked answers pings itself, but
@@ -356,22 +384,26 @@ These are `@Serializable` data classes in `protocol.messages`, sent as JSON text
 encoded with the shared `ProtocolJson` (`ignoreUnknownKeys = true`, `encodeDefaults = true`). Every message has
 `v = Protocol.VERSION` and a `type` from `Protocol.MessageTypes`, which the server uses to decode it:
 
-| Message               | `type`             | Direction       | Fields                                                                                                                       |
-|-----------------------|--------------------|-----------------|------------------------------------------------------------------------------------------------------------------------------|
-| `Hello`               | `hello`            | turtle → server | `turtleId`, `label?`. Must be the first message                                                                              |
-| `PositionUpdate`      | `position_update`  | turtle → server | `turtleId`, `x`, `y`, `z`, `heading?` (`N/E/S/W`), `world?`, `dimension?`, `seedId?`, `ts`                                   |
-| `LabelUpdate`         | `label_update`     | turtle → server | `turtleId`, `label?`: the label the turtle now has                                                                           |
-| `InventoryUpdate`     | `inventory_update` | turtle → server | `turtleId`, `selectedSlot`, `slots` (`InventorySlot[]`: `slot`, `name`, `count`, `nbt?`), `fuel?` (`level?`, `limit?`), `ts` |
-| `RefuelResultUpdate`  | `refuel_result`    | turtle → server | `turtleId`, `refuelId`, `refueled`, `error?`, `fuelAdded?`, `ts`                                                             |
-| `EquipmentUpdate`     | `equipment_update` | turtle → server | `turtleId`, `left?`, `right?` (`EquippedUpgrade`: `item?`, `peripheralTypes`), `itemsKnown`, `ts`                            |
-| `CommandResultUpdate` | `command_result`   | turtle → server | `turtleId`, `commandId`, `command`, `success`, `error?`, `ts`                                                                |
-| `SeedMessage`         | `seed`             | server → turtle | `seed` (a `PositionSeed`)                                                                                                    |
-| `RenameMessage`       | `rename`           | server → turtle | `label?` (null clears the label)                                                                                             |
-| `SelectSlotMessage`   | `select_slot`      | server → turtle | `slot` (1-16)                                                                                                                |
-| `RefuelMessage`       | `refuel`           | server → turtle | `refuelId`, `count?` (1-64; null burns the whole selected stack)                                                             |
-| `CommandMessage`      | `command`          | server → turtle | `commandId`, `command` (one of `Commands`)                                                                                   |
-| `ErrorMessage`        | `error`            | server → turtle | `error`: why the last message was rejected                                                                                   |
-| `HeartbeatMessage`    | `heartbeat`        | server → turtle | none. Sent every 10 s; the turtle reconnects after 30 s without any message                                                  |
+| Message               | `type`               | Direction       | Fields                                                                                                                       |
+|-----------------------|----------------------|-----------------|------------------------------------------------------------------------------------------------------------------------------|
+| `Hello`               | `hello`              | turtle → server | `turtleId`, `label?`. Must be the first message                                                                              |
+| `PositionUpdate`      | `position_update`    | turtle → server | `turtleId`, `x`, `y`, `z`, `heading?` (`N/E/S/W`), `world?`, `dimension?`, `seedId?`, `ts`                                   |
+| `LabelUpdate`         | `label_update`       | turtle → server | `turtleId`, `label?`: the label the turtle now has                                                                           |
+| `InventoryUpdate`     | `inventory_update`   | turtle → server | `turtleId`, `selectedSlot`, `slots` (`InventorySlot[]`: `slot`, `name`, `count`, `nbt?`), `fuel?` (`level?`, `limit?`), `ts` |
+| `RefuelResultUpdate`  | `refuel_result`      | turtle → server | `turtleId`, `refuelId`, `refueled`, `error?`, `fuelAdded?`, `ts`                                                             |
+| `EquipmentUpdate`     | `equipment_update`   | turtle → server | `turtleId`, `left?`, `right?` (`EquippedUpgrade`: `item?`, `peripheralTypes`), `itemsKnown`, `ts`                            |
+| `CommandResultUpdate` | `command_result`     | turtle → server | `turtleId`, `commandId`, `command`, `success`, `error?`, `ts`                                                                |
+| `SeedMessage`         | `seed`               | server → turtle | `seed` (a `PositionSeed`)                                                                                                    |
+| `RenameMessage`       | `rename`             | server → turtle | `label?` (null clears the label)                                                                                             |
+| `SelectSlotMessage`   | `select_slot`        | server → turtle | `slot` (1-16)                                                                                                                |
+| `RefuelMessage`       | `refuel`             | server → turtle | `refuelId`, `count?` (1-64; null burns the whole selected stack)                                                             |
+| `CommandMessage`      | `command`            | server → turtle | `commandId`, `command` (one of `Commands`)                                                                                   |
+| `BlockObservations`   | `block_observations` | turtle → server | `turtleId`, `world?`, `dimension?`, `blocks` (`ObservedBlock[]`: `x`, `y`, `z`, `name`), `ts`. See [World map](#world-map)   |
+| `PathResultUpdate`    | `path_result`        | turtle → server | `turtleId`, `pathId`, `status` (`done`, `blocked`, `failed`, `cancelled`), `stepsDone`, `error?`, `ts`                       |
+| `PathMessage`         | `path`               | server → turtle | `pathId`, `start` (`x`, `y`, `z`, `heading`), `steps` (`action`, `dig`)                                                      |
+| `PathCancelMessage`   | `path_cancel`        | server → turtle | `pathId`                                                                                                                     |
+| `ErrorMessage`        | `error`              | server → turtle | `error`: why the last message was rejected                                                                                   |
+| `HeartbeatMessage`    | `heartbeat`          | server → turtle | none. Sent every 10 s; the turtle reconnects after 30 s without any message                                                  |
 
 ---
 
@@ -528,8 +560,8 @@ never dig it. Stations are saved in the `station` table and kept in memory.
 
 ## Pathfinding
 
-`PathPlanner` (in `app/path`) plans a turtle's route with A*. It isn't connected to turtles yet; `goto` comes next.
-It works on a `WorldView` (what's known at each cell, and a guess for cells nobody has seen) and returns the steps a
+`PathPlanner` (in `app/path`) plans a turtle's route with A*; [Goto](#goto) uses it to send turtles places. It works on
+a `WorldView` (what's known at each cell, and a guess for cells nobody has seen) and returns the steps a
 turtle takes: `forward`, `back`, `up`, `down`, `turnLeft`, `turnRight`, each with the pose it ends at and whether
 it digs first. `Path.fuel` is the number of moves; turns and digs use no fuel.
 
@@ -543,6 +575,7 @@ Costs are in moves (`PathCosts`), and the planner finds the cheapest path for th
 | Dig up or down, then move            | 1 + 2  |
 | Dig in front, then move              | 1 + 11 |
 | Cell nobody has seen                 | +0.01  |
+| ...probably solid, but can't be dug  | +4     |
 
 So a turtle takes a detour of up to 11 moves rather than dig one block sideways, and prefers digging up or down to
 open space over tunnelling. A cell nobody has seen counts as air or, if `WorldView.probablySolid` says so, as a dig;
@@ -558,6 +591,43 @@ On a test machine a 200 block trip over unexplored ground plans in about 20 ms, 
 underground through unexplored, probably solid ground, which means going up to the surface and back down) in about
 0.4 s. `PathPlannerOptimalityTest` checks the paths are the cheapest by comparing with an exhaustive search on
 random worlds.
+
+## Goto
+
+`POST /api/turtles/{id}/goto` with `{"x":..,"y":..,"z":..,"heading":"N"}` sends a turtle somewhere. `TripService`
+plans a path at once, so an impossible trip is refused (`422`), sends it as a `path` message, and follows the trip:
+
+1. The server plans over the known blocks in a box around the start and goal (24 blocks to each side, from 16 below
+   the lower one to 16 above the highest of the start, the goal, the tallest known block and the surface guess). At
+   first it **explores**: cells nobody has seen count as open, so the path takes the shortest way through unexplored
+   ground and the turtle maps that route as it goes, which pays off because turtles go back and forth between their
+   work and the stations. Once a trip has been blocked 3 times (`TripConfig.exploreUntilBlocked`), its new paths use
+   `KnownWorld`'s guesses instead, so a turtle in rock digs through rather than probing the rock all round it. Other
+   turtles' cells and station chests are never entered; the turtle digs
+   only if its equipment includes a digging tool. A path needing more fuel than the turtle has is refused.
+2. The turtle (`main.lua`) checks it is at the path's `start`; if not (it moved after the server planned), it doesn't
+   move and replies `blocked`. Then it runs each step, digging first when a step says `dig` (repeatedly, for falling
+   sand and gravel), and reports its position and the blocks around it after each one.
+3. If a move fails, the turtle stops and replies `blocked`. By then the server has the blocks it saw, so it plans a
+   new path from where the turtle is: `Trip.replans` counts these, and the trip fails after 20. When the step led
+   into a cell the map says is open (a mob, a player), the server waits a second first.
+4. `done` ends the trip as `arrived`. `failed` (e.g. out of fuel) and no path from where it stopped end it as
+   `failed`, with `Trip.error` saying why. So does the turtle disconnecting: it stops its path when the connection
+   drops.
+
+A new goto replaces a trip in progress (the old one ends as `cancelled`), and `DELETE` cancels one: the server sends
+`path_cancel` and the turtle stops after its current step. Paths run in their own coroutine on the turtle
+(`parallel.waitForAny`), so messages such as a cancel still arrive while it moves. Trips are kept in memory: each
+turtle's current or last one.
+
+**Guessing unseen cells** (`KnownWorld`, after exploring has been blocked a few times): a cell nobody has seen is
+guessed from what's known above and below it in
+its column, or the nearest seen column within 8 blocks. Under a known solid block, or between known air and known
+ground, it's solid; between known air above and below, or above a column's highest known block when that's air, it's
+air; otherwise it's solid below y 62 and air above. Wrong guesses of solid cost little (the turtle is ready to dig a
+cell that turns out to be air), wrong guesses of air cost a replan, so it leans towards solid. To help, the cell a
+turtle reports standing in is recorded as air, and another turtle seen by `turtle.inspect` is stored as the air it
+stands in, since it will move.
 
 ## Equipment and capabilities
 
@@ -637,7 +707,8 @@ Done:
 - [x] Move, turn, dig, place, drop, suck and attack through the API
 - [x] World map built from the blocks turtles inspect
 - [x] Fuel, drop and pickup stations set up through the API
-- [x] A* route planning (not yet used by turtles)
+- [x] A* route planning
+- [x] Send a turtle somewhere through the API, replanning when it's blocked
 
 Not yet connected:
 
