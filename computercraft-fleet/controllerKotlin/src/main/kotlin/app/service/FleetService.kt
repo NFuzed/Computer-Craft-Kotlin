@@ -226,9 +226,9 @@ class FleetService(
         )
     }
 
-    /** The known blocks in the box from [min] to [max], both inclusive. */
-    fun mapRegion(id: MapId, min: BlockPos, max: BlockPos): MapRegion =
-        MapRegion(world = id.world, dimension = id.dimension, blocks = worldMap.region(id, min, max))
+    /** The known blocks in the box from [min] to [max], both inclusive, leaving out known air unless [includeAir]. */
+    fun mapRegion(id: MapId, min: BlockPos, max: BlockPos, includeAir: Boolean = true): MapRegion =
+        MapRegion(world = id.world, dimension = id.dimension, blocks = worldMap.region(id, min, max, includeAir))
 
     private fun updateLabel(turtleId: Int, label: String?) {
         registry.setLabel(turtleId, label)

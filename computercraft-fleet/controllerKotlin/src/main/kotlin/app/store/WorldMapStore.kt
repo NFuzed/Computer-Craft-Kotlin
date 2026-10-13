@@ -4,6 +4,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import protocol.ProtocolJson
+import protocol.api.AIR
 import protocol.api.KnownBlock
 import java.io.File
 import java.nio.file.Files
@@ -46,11 +47,15 @@ class WorldMapStore(
 
     fun get(id: MapId, pos: BlockPos): KnownBlock? = maps[id]?.get(pos)
 
-    /** Every known block in the box from [min] to [max] (both inclusive), sorted by y, then z, then x. */
-    fun region(id: MapId, min: BlockPos, max: BlockPos): List<KnownBlock> {
+    /**
+     * Every known block in the box from [min] to [max] (both inclusive), sorted by y, then z, then x. Known air is left
+     * out unless [includeAir], since only the pathfinder needs to tell it from cells nobody has seen.
+     */
+    fun region(id: MapId, min: BlockPos, max: BlockPos, includeAir: Boolean = true): List<KnownBlock> {
         val map = maps[id] ?: return emptyList()
         return map.values
             .filter { it.x in min.x..max.x && it.y in min.y..max.y && it.z in min.z..max.z }
+            .filter { includeAir || it.name != AIR }
             .sortedWith(compareBy({ it.y }, { it.z }, { it.x }))
     }
 
