@@ -22,6 +22,17 @@ dependencies {
     implementation(libs.postgresql)
     implementation(libs.hikaricp)
     implementation(libs.slf4j.simple) // HikariCP logs through SLF4J
+
+    testImplementation(platform(libs.junit.bom))
+    testImplementation(libs.kotlin.test.junit5)
+    testImplementation(libs.junit.platform.launcher) // for TestPostgresShutdown
+    testImplementation(libs.bundles.ktor.test)
+    testImplementation(libs.embedded.postgres)
+    testImplementation(platform(libs.embedded.postgres.binaries.bom))
+}
+
+tasks.test {
+    useJUnitPlatform()
 }
 
 application {

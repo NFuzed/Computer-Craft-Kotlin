@@ -4,6 +4,9 @@ ktor = "2.3.12"
 postgresql = "42.7.4"
 hikaricp = "5.1.0"
 slf4j = "2.0.16"
+junit = "5.10.3"
+embedded-postgres = "2.1.0"
+embedded-postgres-binaries = "17.2.0"
 
 [libraries]
 ktor-bom = { module = "io.ktor:ktor-bom", version.ref = "ktor" }
@@ -18,6 +21,17 @@ postgresql = { module = "org.postgresql:postgresql", version.ref = "postgresql" 
 hikaricp = { module = "com.zaxxer:HikariCP", version.ref = "hikaricp" }
 slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
 
+# Tests
+kotlin-test-junit5 = { module = "org.jetbrains.kotlin:kotlin-test-junit5", version.ref = "kotlin" }
+# kotlin-test-junit5 brings JUnit 5.6; the BOM moves it to a version with LauncherSessionListener
+junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
+junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }
+ktor-server-test-host = { module = "io.ktor:ktor-server-test-host-jvm" }
+ktor-client-content-negotiation = { module = "io.ktor:ktor-client-content-negotiation-jvm" }
+# Real Postgres binaries started by the tests, so they need neither an installed server nor Docker
+embedded-postgres = { module = "io.zonky.test:embedded-postgres", version.ref = "embedded-postgres" }
+embedded-postgres-binaries-bom = { module = "io.zonky.test.postgres:embedded-postgres-binaries-bom", version.ref = "embedded-postgres-binaries" }
+
 [bundles]
 ktor-server = [
     "ktor-server-core",
@@ -25,6 +39,10 @@ ktor-server = [
     "ktor-server-websockets",
     "ktor-server-content-negotiation",
     "ktor-serialization-kotlinx-json",
+]
+ktor-test = [
+    "ktor-server-test-host",
+    "ktor-client-content-negotiation",
 ]
 
 [plugins]

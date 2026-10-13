@@ -8,11 +8,13 @@ import app.service.TurtleSessions
 import app.store.*
 import io.ktor.server.application.*
 
-fun Application.module() {
+fun Application.module() = module(Database.fromEnvironment())
+
+/** The server, on [db]. Tests call this with their own database; the server closes it when it stops. */
+fun Application.module(db: Database) {
     configureWebSockets()
     configureSerialization()
 
-    val db = Database.fromEnvironment()
     environment.monitor.subscribe(ApplicationStopped) { db.close() }
 
     val positionStore = PositionStore(db)
