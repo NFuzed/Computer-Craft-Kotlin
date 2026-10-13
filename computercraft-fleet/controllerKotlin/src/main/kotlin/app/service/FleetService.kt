@@ -114,6 +114,26 @@ class FleetService(
         return status(turtleId)!!
     }
 
+    /**
+     * Stores what the dashboard says the turtle has equipped, until the turtle reports equipment with item names. Returns
+     * null if the turtle isn't known.
+     */
+    fun seedEquipment(turtleId: Int, request: EquipmentSeedRequest): TurtleStatus? {
+        if (status(turtleId) == null) return null
+        equipments.put(
+            turtleId,
+            TurtleEquipment(
+                left = request.left,
+                right = request.right,
+                itemsKnown = true,
+                capabilities = capabilitiesOf(request.left, request.right),
+                seeded = true,
+                ts = clock()
+            )
+        )
+        return status(turtleId)
+    }
+
     fun inventory(turtleId: Int): TurtleInventory? =
         inventories.get(turtleId)?.copy(lastRefuel = lastRefuels[turtleId])
 
@@ -131,9 +151,13 @@ class FleetService(
         )
     }
 
-    /** A turtle reports its upgrades, replacing what was stored. */
+    /**
+     * A turtle reports its upgrades, replacing what was stored. A turtle that can't read item names keeps what the
+     * dashboard seeded, since its report would hide the tools the seed names.
+     */
     fun recordEquipment(update: EquipmentUpdate) {
         registry.recordSeen(update.turtleId)
+        if (!update.itemsKnown && equipments.get(update.turtleId)?.seeded == true) return
         equipments.put(
             update.turtleId,
             TurtleEquipment(
