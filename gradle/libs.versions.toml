@@ -1,0 +1,32 @@
+[versions]
+kotlin = "1.9.21"
+ktor = "2.3.12"
+postgresql = "42.7.4"
+hikaricp = "5.1.0"
+slf4j = "2.0.16"
+
+[libraries]
+ktor-bom = { module = "io.ktor:ktor-bom", version.ref = "ktor" }
+ktor-server-core = { module = "io.ktor:ktor-server-core-jvm" }
+ktor-server-netty = { module = "io.ktor:ktor-server-netty-jvm" }
+ktor-server-websockets = { module = "io.ktor:ktor-server-websockets-jvm" }
+ktor-server-content-negotiation = { module = "io.ktor:ktor-server-content-negotiation-jvm" }
+ktor-serialization-kotlinx-json = { module = "io.ktor:ktor-serialization-kotlinx-json-jvm" }
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json" }
+
+postgresql = { module = "org.postgresql:postgresql", version.ref = "postgresql" }
+hikaricp = { module = "com.zaxxer:HikariCP", version.ref = "hikaricp" }
+slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
+
+[bundles]
+ktor-server = [
+    "ktor-server-core",
+    "ktor-server-netty",
+    "ktor-server-websockets",
+    "ktor-server-content-negotiation",
+    "ktor-serialization-kotlinx-json",
+]
+
+[plugins]
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }

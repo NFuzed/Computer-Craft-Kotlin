@@ -1,16 +1,8 @@
 package app.store
 
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
-import protocol.ProtocolJson
 import protocol.api.AIR
 import protocol.api.KnownBlock
-import java.io.File
-import java.nio.file.Files
-import java.nio.file.StandardCopyOption
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicBoolean
+import java.sql.ResultSet
 
 /** Which world map a block belongs to. Turtles report world and dimension from their seed; either may be null. */
 data class MapId(val world: String?, val dimension: String?)
@@ -18,81 +10,79 @@ data class MapId(val world: String?, val dimension: String?)
 data class BlockPos(val x: Int, val y: Int, val z: Int)
 
 /**
- * What the turtles have seen of the world: the last block reported at each cell, per [MapId]. Cells nobody has seen
- * aren't stored. The pathfinder will plan over this.
+ * What the turtles have seen of the world: the last block reported at each cell, per [MapId], in the `world_block`
+ * table. Cells nobody has seen aren't stored. The pathfinder will plan over this.
  *
- * Turtles report a few blocks after every move, so unlike the other stores this one doesn't write the file on every
- * change. [record] marks it dirty and [saveIfDirty] writes it; the application calls that every few seconds and on
- * shutdown.
+ * Unlike the other stores this one keeps nothing in memory, since the map can grow far larger than the rest; every
+ * call goes to the database. A null world or dimension is stored as an empty string, because both are part of the
+ * primary key.
  */
-class WorldMapStore(
-    private val file: File,
-    private val json: Json = ProtocolJson // compact: this file gets big
-) {
-    private val maps = ConcurrentHashMap<MapId, ConcurrentHashMap<BlockPos, KnownBlock>>()
-    private val dirty = AtomicBoolean(false)
-
-    init {
-        loadFromDisk()
-    }
+class WorldMapStore(private val db: Database) {
 
     /** Stores [blocks] in the map [id], replacing whatever was known about their cells. */
     fun record(id: MapId, blocks: List<KnownBlock>) {
-        val map = maps.computeIfAbsent(id) { ConcurrentHashMap() }
-        for (block in blocks) {
-            map[BlockPos(block.x, block.y, block.z)] = block
+        if (blocks.isEmpty()) return
+        db.transaction { conn ->
+            conn.prepareStatement(
+                """
+                INSERT INTO world_block (world, dimension, y, z, x, name, turtle_id, ts)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (world, dimension, chunk_x, chunk_z, y, z, x) DO UPDATE SET
+                    name = EXCLUDED.name, turtle_id = EXCLUDED.turtle_id, ts = EXCLUDED.ts
+                """
+            ).use { stmt ->
+                // a message can report the same cell twice; only the last report should count
+                for (b in blocks.associateBy { BlockPos(it.x, it.y, it.z) }.values) {
+                    stmt.bind(arrayOf(id.worldKey, id.dimensionKey, b.y, b.z, b.x, b.name, b.turtleId, b.ts))
+                        .addBatch()
+                }
+                stmt.executeBatch()
+            }
         }
-        dirty.set(true)
     }
 
-    fun get(id: MapId, pos: BlockPos): KnownBlock? = maps[id]?.get(pos)
+    fun get(id: MapId, pos: BlockPos): KnownBlock? = db.transaction { conn ->
+        conn.query(
+            """
+            SELECT * FROM world_block
+            WHERE world = ? AND dimension = ? AND chunk_x = ? AND chunk_z = ? AND y = ? AND z = ? AND x = ?
+            """,
+            id.worldKey, id.dimensionKey, pos.x shr 4, pos.z shr 4, pos.y, pos.z, pos.x
+        ) { it.toKnownBlock() }.firstOrNull()
+    }
 
     /**
      * Every known block in the box from [min] to [max] (both inclusive), sorted by y, then z, then x. Known air is left
      * out unless [includeAir], since only the pathfinder needs to tell it from cells nobody has seen.
+     *
+     * It looks up each chunk the box covers by the primary key, so it only reads blocks in those chunks.
      */
-    fun region(id: MapId, min: BlockPos, max: BlockPos, includeAir: Boolean = true): List<KnownBlock> {
-        val map = maps[id] ?: return emptyList()
-        return map.values
-            .filter { it.x in min.x..max.x && it.y in min.y..max.y && it.z in min.z..max.z }
-            .filter { includeAir || it.name != AIR }
-            .sortedWith(compareBy({ it.y }, { it.z }, { it.x }))
-    }
-
-    /** Writes the file if anything changed since the last save. */
-    @Synchronized
-    fun saveIfDirty() {
-        if (!dirty.getAndSet(false)) return
-        runCatching { saveToDisk() }.onFailure {
-            dirty.set(true) // try again next time
-            println("WorldMapStore: can't save ${file.path}: ${it.message}")
+    fun region(id: MapId, min: BlockPos, max: BlockPos, includeAir: Boolean = true): List<KnownBlock> =
+        db.transaction { conn ->
+            conn.query(
+                """
+                SELECT b.* FROM generate_series(?, ?) AS cx
+                CROSS JOIN generate_series(?, ?) AS cz
+                JOIN world_block b
+                  ON b.world = ? AND b.dimension = ? AND b.chunk_x = cx AND b.chunk_z = cz
+                WHERE b.y BETWEEN ? AND ? AND b.z BETWEEN ? AND ? AND b.x BETWEEN ? AND ?
+                  AND (? OR b.name <> ?)
+                ORDER BY b.y, b.z, b.x
+                """,
+                min.x shr 4, max.x shr 4, min.z shr 4, max.z shr 4, id.worldKey, id.dimensionKey,
+                min.y, max.y, min.z, max.z, min.x, max.x, includeAir, AIR
+            ) { it.toKnownBlock() }
         }
-    }
 
-    private fun loadFromDisk() {
-        if (!file.exists()) return
-        val text = file.readText()
-        if (text.isBlank()) return
-        val saved = runCatching { json.decodeFromString<List<SavedMap>>(text) }.getOrNull() ?: return
-        for (map in saved) {
-            maps[MapId(map.world, map.dimension)] =
-                ConcurrentHashMap(map.blocks.associateBy { BlockPos(it.x, it.y, it.z) })
-        }
-    }
+    private val MapId.worldKey get() = world ?: ""
+    private val MapId.dimensionKey get() = dimension ?: ""
 
-    private fun saveToDisk() {
-        val saved = maps.map { (id, blocks) -> SavedMap(id.world, id.dimension, blocks.values.toList()) }
-        file.parentFile?.mkdirs()
-        // write a temporary file and move it over the old one, so a crash mid-write doesn't lose the whole map
-        val tmp = File(file.path + ".tmp")
-        tmp.writeText(json.encodeToString(saved))
-        Files.move(tmp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
-    }
-
-    @Serializable
-    private data class SavedMap(
-        val world: String? = null,
-        val dimension: String? = null,
-        val blocks: List<KnownBlock>
+    private fun ResultSet.toKnownBlock() = KnownBlock(
+        x = getInt("x"),
+        y = getInt("y"),
+        z = getInt("z"),
+        name = getString("name"),
+        turtleId = getIntOrNull("turtle_id"),
+        ts = getLong("ts")
     )
 }

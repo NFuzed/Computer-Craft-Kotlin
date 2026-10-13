@@ -1,29 +1,32 @@
 package app.store
 
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
-import protocol.ProtocolJson
 import protocol.api.PendingLabel
-import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Renames waiting to be picked up by a turtle, at most one per turtle (a newer rename replaces an older one).
- * Saved to disk so a rename survives a server restart before the turtle collects it.
+ * Kept in memory and written through to the `pending_label` table, so a rename survives a server restart before the
+ * turtle collects it.
  */
-class LabelStore(
-    private val file: File,
-    private val json: Json = Json(ProtocolJson) { prettyPrint = true }
-) {
+class LabelStore(private val db: Database) {
     private val map = ConcurrentHashMap<Int, PendingLabel>()
 
     init {
-        loadFromDisk()
+        load()
     }
 
+    @Synchronized
     fun put(turtleId: Int, pending: PendingLabel) {
+        db.transaction {
+            it.execute(
+                """
+                INSERT INTO pending_label (turtle_id, label, ts) VALUES (?, ?, ?)
+                ON CONFLICT (turtle_id) DO UPDATE SET label = EXCLUDED.label, ts = EXCLUDED.ts
+                """,
+                turtleId, pending.label, pending.ts
+            )
+        }
         map[turtleId] = pending
-        saveToDisk()
     }
 
     fun get(turtleId: Int): PendingLabel? = map[turtleId]
@@ -31,23 +34,20 @@ class LabelStore(
     fun ids(): Set<Int> = map.keys
 
     /** Removes the turtle's rename only if it is for [label], so a turtle still using an old label can't clear it. */
+    @Synchronized
     fun acknowledge(turtleId: Int, label: String?): Boolean {
         val current = map[turtleId] ?: return false
-        if (current.label != label || !map.remove(turtleId, current)) return false
-        saveToDisk()
+        if (current.label != label) return false
+        db.transaction { it.execute("DELETE FROM pending_label WHERE turtle_id = ?", turtleId) }
+        map.remove(turtleId)
         return true
     }
 
-    private fun loadFromDisk() {
-        if (!file.exists()) return
-        val text = file.readText()
-        if (text.isBlank()) return
-        val saved = runCatching { json.decodeFromString<Map<Int, PendingLabel>>(text) }.getOrNull() ?: return
-        map.putAll(saved)
-    }
-
-    private fun saveToDisk() {
-        file.parentFile?.mkdirs()
-        file.writeText(json.encodeToString<Map<Int, PendingLabel>>(map.toSortedMap()))
+    private fun load() {
+        db.transaction { conn ->
+            conn.query("SELECT * FROM pending_label") { rs ->
+                rs.getInt("turtle_id") to PendingLabel(label = rs.getString("label"), ts = rs.getLong("ts"))
+            }.toMap(map)
+        }
     }
 }

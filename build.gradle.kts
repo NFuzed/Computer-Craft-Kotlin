@@ -1,8 +1,8 @@
 import java.security.MessageDigest
 
 plugins {
-    kotlin("jvm") version "1.9.21"
-    kotlin("plugin.serialization") version "1.9.21"
+    alias(libs.plugins.kotlin.jvm)
+    alias(libs.plugins.kotlin.serialization)
     application
 }
 
@@ -14,16 +14,14 @@ repositories {
 }
 
 dependencies {
-    implementation(platform("io.ktor:ktor-bom:2.3.12"))
+    implementation(platform(libs.ktor.bom))
+    implementation(libs.bundles.ktor.server)
 
-    implementation("io.ktor:ktor-server-core-jvm")
-    implementation("io.ktor:ktor-server-netty-jvm")
-    implementation("io.ktor:ktor-server-websockets-jvm")
-    implementation("io.ktor:ktor-server-content-negotiation-jvm")
-    implementation("io.ktor:ktor-serialization-kotlinx-json-jvm")
+    implementation(libs.kotlinx.serialization.json)
 
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json")
-
+    implementation(libs.postgresql)
+    implementation(libs.hikaricp)
+    implementation(libs.slf4j.simple) // HikariCP logs through SLF4J
 }
 
 application {

@@ -50,13 +50,16 @@ uses to push position seeds and renames to it the moment the dashboard asks.
             │   │   ├── Capabilities.kt    # Works out what a turtle can do from its equipment
             │   │   └── TurtleSessions.kt  # The open /ws/turtle connection per turtle
             │   └── store/
-            │       ├── PositionStore.kt   # In-memory + JSON-on-disk turtle positions
-            │       ├── SeedStore.kt       # Pending position seeds, saved to disk
-            │       ├── LabelStore.kt      # Pending renames, saved to disk
-            │       ├── EquipmentStore.kt  # Each turtle's last reported equipment, saved to disk
-            │       ├── WorldMapStore.kt   # Blocks the turtles have seen, saved to disk every few seconds
+            │       ├── Database.kt        # Postgres connection pool, creates the tables, small JDBC helpers
+            │       ├── PositionStore.kt   # Each turtle's last position
+            │       ├── SeedStore.kt       # Pending position seeds
+            │       ├── LabelStore.kt      # Pending renames
+            │       ├── InventoryStore.kt  # Each turtle's last reported inventory
+            │       ├── EquipmentStore.kt  # Each turtle's last reported equipment
+            │       ├── WorldMapStore.kt   # Blocks the turtles have seen (database only, not cached)
             │       └── TurtleRegistry.kt  # Label + last-seen per turtle (in memory)
             └── resources/           # Lua code that gets served to turtles
+                ├── db/schema.sql    # The tables, created on startup if missing
                 ├── startup.lua
                 ├── manifest.template.json
                 ├── manifest.json    # Generated; do not edit by hand
@@ -80,10 +83,33 @@ source directories to the main source set, so the server can use the protocol cl
 
 - **JDK 20.** The Kotlin toolchain is pinned to 20. The foojay resolver plugin can download it automatically.
 - The Gradle wrapper, which is included.
+- **PostgreSQL** (any recent version; developed against 18). See [Database setup](#database-setup).
 - A Minecraft world with **CC: Tweaked** and the HTTP API enabled.
 - A public URL that turtles can reach. The project currently uses an **ngrok** tunnel to `localhost:8000`.
 
 ---
+
+## Database setup
+
+The server keeps everything in Postgres. Create a database and a user for it once, e.g. in pgAdmin's Query Tool
+while connected as `postgres`:
+
+```sql
+CREATE USER fleet WITH PASSWORD 'choose-a-password';
+CREATE DATABASE fleet OWNER fleet;
+```
+
+The server reads its connection from environment variables:
+
+| Variable            | Default                                  |
+|---------------------|------------------------------------------|
+| `FLEET_DB_URL`      | `jdbc:postgresql://localhost:5432/fleet` |
+| `FLEET_DB_USER`     | `fleet`                                  |
+| `FLEET_DB_PASSWORD` | none; the server won't start without it  |
+
+On startup it runs `resources/db/schema.sql`, which creates any table that doesn't exist yet. It leaves existing
+tables alone, so after changing a table there, drop it (or the whole database) to have it recreated; there are no
+migrations, so its data is lost.
 
 ## Running the server
 
@@ -193,7 +219,7 @@ The server pings every 15 s and drops a connection after 30 s without a reply. C
 Lua never sees them, so the turtle relies on the heartbeats instead: if nothing arrives for 30 s, `net.lua` closes the
 connection and reconnects. That catches connections that died without closing, e.g. when the server's PC sleeps. If
 the connection drops, `net.lua` reconnects every 5 s. Anything queued while a turtle is offline stays in
-`data/seeds.json` / `data/labels.json` and is sent on its next `hello`.
+the `pending_seed` / `pending_label` tables and is sent on its next `hello`.
 
 ---
 
@@ -312,7 +338,7 @@ saved before turning. A shutdown mid-turn can leave the heading off by 90° unti
 **Seeding.**
 
 1. The dashboard sends `POST /api/turtles/{id}/seed`. The server stores a `PositionSeed` with a new `seedId` in
-   `data/seeds.json`. A newer seed replaces an older one.
+   the `pending_seed` table. A newer seed replaces an older one.
 2. The server pushes it to the turtle straight away, or on its next `hello` if it is offline. The turtle applies
    it, replacing any position it had. Seeding again is also how a drifted position is corrected.
 3. The turtle then sends a position update. Every position update carries the `seedId` it is based on, and the
@@ -326,7 +352,8 @@ A turtle that has never been seeded doesn't move: the nav functions return `fals
 A turtle's name is its ComputerCraft label, and the turtle sends it in every `hello`. So the server can't simply
 store a new name, because the next `hello` would overwrite it. Renames go through the turtle instead:
 
-1. The dashboard sends `PUT /api/turtles/{id}/label`. The server stores a `PendingLabel` in `data/labels.json` and
+1. The dashboard sends `PUT /api/turtles/{id}/label`. The server stores a `PendingLabel` in the `pending_label` table
+   and
    shows it as `pendingLabel` in `TurtleStatus`. A newer rename replaces an older one.
 2. The server pushes it to the turtle straight away, or on its next `hello` if it is offline. The turtle calls
    `os.setComputerLabel` and replies with a `label_update`.
@@ -342,7 +369,8 @@ turtle's label would never match and the rename would be sent forever.
 The turtle sends its whole inventory as an `inventory_update`: after every connect, whenever the `turtle_inventory`
 event fires (items added, removed or moved), and after selecting a slot (which doesn't fire that event). It lists
 only non-empty slots, from `turtle.getItemDetail`, plus `turtle.getSelectedSlot()`. The server replaces what it had
-for that turtle and saves it to `data/inventories.json`, so `GET /api/turtles/{id}/inventory` still answers after a
+for that turtle and saves it to the `turtle_inventory` and `inventory_slot` tables, so `GET /api/turtles/{id}/inventory`
+still answers after a
 server restart. The response's `ts` says how old it is.
 
 `POST /api/turtles/{id}/inventory/selected` sends a `select_slot` to the turtle straight away. It isn't queued like
@@ -401,9 +429,12 @@ there. Each inspect takes a tick and uses no fuel. If the turtle's position is w
 
 `WorldMapStore` keeps one map per `world` and `dimension` (taken from the turtle's seed; either can be null), with
 the latest block reported at each cell as a `KnownBlock` (`x`, `y`, `z`, `name`, `turtleId`, `ts`). A new report
-replaces what was known about a cell. Cells nobody has seen aren't stored. Because turtles report after every move, it
-doesn't write the file on every change: it's saved to `data/worldmap.json` every 5 seconds if anything changed, and
-when the server stops. The file is written to a temporary file first and then moved into place.
+replaces what was known about a cell. Cells nobody has seen aren't stored. Each report is upserted straight
+into the `world_block` table, whose primary key is `(world, dimension, chunk_x, chunk_z, y, z, x)`; a null world or
+dimension is
+stored as an empty string, since a primary key can't hold nulls. `chunk_x` and `chunk_z` are generated by Postgres
+(`x >> 4`, `z >> 4`, Minecraft's 16x16 chunks), so a box query looks up just the chunks it covers rather than every
+block at its heights. Nothing is cached in memory, so the map can grow beyond what fits in RAM.
 
 `GET /api/map/blocks` returns the known blocks in a box, sorted by y, then z, then x:
 
@@ -421,7 +452,8 @@ changes it (equipping swaps an item between the inventory and a side). Each side
 `item` from `turtle.getEquippedLeft/Right()` and the `peripheralTypes` from `peripheral.getType(side)`; an empty side
 is null.
 
-The server stores it in `data/equipment.json` and returns it as `equipment` in `TurtleStatus`, with a `capabilities`
+The server stores it in the `turtle_equipment` table and returns it as `equipment` in `TurtleStatus`, with a
+`capabilities`
 list worked out in `app/service/Capabilities.kt` (names in `protocol.api.Capabilities`):
 
 | Upgrade                                 | Capabilities                           |
@@ -437,21 +469,25 @@ Every turtle can move, place, drop, suck and refuel, so those aren't listed. Old
 `turtle.getEquippedLeft/Right`; their turtles report `itemsKnown: false` and only peripheral upgrades, so a tool
 doesn't show up, and a peripheral block beside an empty side can be mistaken for an upgrade.
 
-## Position storage
+## Storage
 
-`PositionStore` keeps one `TurtlePosition` per `turtleId`. It stores them in a `ConcurrentHashMap` and saves them
-to `data/positions.json`, relative to the working directory:
+Everything is saved in Postgres (see [Database setup](#database-setup)):
 
-- On startup, it loads existing data from the file. A missing file is ignored, and so is one that is empty or can't be
-  parsed.
-- `upsert(id, pos)` writes the whole file to disk on every call. There is a note in the code to debounce or batch this
-  later.
-- `get(id)` returns one position, and `ids()` returns every turtle ID that has a position.
-- The file is a JSON object keyed by turtle ID, for example `{"7": {"x": 10, ...}}`.
+| Table                                | Store            | Holds                                 |
+|--------------------------------------|------------------|---------------------------------------|
+| `turtle_position`                    | `PositionStore`  | Each turtle's last `TurtlePosition`   |
+| `pending_seed`                       | `SeedStore`      | Seeds not yet applied                 |
+| `pending_label`                      | `LabelStore`     | Renames not yet applied               |
+| `turtle_inventory`, `inventory_slot` | `InventoryStore` | Each turtle's last inventory and fuel |
+| `turtle_equipment`                   | `EquipmentStore` | Each turtle's last equipment          |
+| `world_block`                        | `WorldMapStore`  | The world map                         |
+
+All stores except `WorldMapStore` load their table into a `ConcurrentHashMap` on startup and write through to the
+database on every change, so reads never hit the database. `lastRefuel` and `lastCommand` aren't saved.
 
 `TurtleRegistry` keeps each turtle's label and when it was last seen, in memory only. `TurtleSessions` keeps each
-turtle's open WebSocket. `FleetService` combines them with the position, seed and label stores into the
-`TurtleStatus` objects that `/api` returns. `data/` is git-ignored.
+turtle's open WebSocket. `FleetService` combines them with the stores into the `TurtleStatus` objects that `/api`
+returns.
 
 ---
 

@@ -1,41 +1,49 @@
 package app.store
 
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
-import protocol.ProtocolJson
 import protocol.api.TurtlePosition
-import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
-class PositionStore(
-    private val file: File,
-    private val json: Json = Json(ProtocolJson) { prettyPrint = true }
-) {
+/** The last position each turtle reported. Kept in memory and written through to the `turtle_position` table. */
+class PositionStore(private val db: Database) {
     private val map = ConcurrentHashMap<Int, TurtlePosition>()
 
     init {
-        loadFromDisk()
+        load()
     }
 
     fun upsert(turtleId: Int, pos: TurtlePosition) {
+        db.transaction {
+            it.execute(
+                """
+                INSERT INTO turtle_position (turtle_id, x, y, z, heading, world, dimension, ts)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (turtle_id) DO UPDATE SET
+                    x = EXCLUDED.x, y = EXCLUDED.y, z = EXCLUDED.z, heading = EXCLUDED.heading,
+                    world = EXCLUDED.world, dimension = EXCLUDED.dimension, ts = EXCLUDED.ts
+                """,
+                turtleId, pos.x, pos.y, pos.z, pos.heading, pos.world, pos.dimension, pos.ts
+            )
+        }
         map[turtleId] = pos
-        saveToDisk() // simple version; later we can debounce/batch
     }
 
     fun get(turtleId: Int): TurtlePosition? = map[turtleId]
 
     fun ids(): Set<Int> = map.keys
 
-    private fun loadFromDisk() {
-        if (!file.exists()) return
-        val text = file.readText()
-        if (text.isBlank()) return
-        val saved = runCatching { json.decodeFromString<Map<Int, TurtlePosition>>(text) }.getOrNull() ?: return
-        map.putAll(saved)
-    }
-
-    private fun saveToDisk() {
-        file.parentFile?.mkdirs()
-        file.writeText(json.encodeToString<Map<Int, TurtlePosition>>(map.toSortedMap()))
+    private fun load() {
+        db.transaction { conn ->
+            conn.query("SELECT * FROM turtle_position") { rs ->
+                rs.getInt("turtle_id") to TurtlePosition(
+                    x = rs.getInt("x"),
+                    y = rs.getInt("y"),
+                    z = rs.getInt("z"),
+                    heading = rs.getString("heading"),
+                    world = rs.getString("world"),
+                    dimension = rs.getString("dimension"),
+                    ts = rs.getLong("ts")
+                )
+            }.toMap(map)
+        }
     }
 }
