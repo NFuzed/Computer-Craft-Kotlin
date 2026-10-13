@@ -41,6 +41,31 @@ class WorldMapStore(private val db: Database) {
         }
     }
 
+    /**
+     * Moves the blocks [turtleId] was the last to report from the map [from] to the map [to]. Where [to] already
+     * knows a cell, the newer report wins. Returns how many blocks were moved out of [from].
+     */
+    fun moveTurtleBlocks(turtleId: Int, from: MapId, to: MapId): Int {
+        if (from.worldKey == to.worldKey && from.dimensionKey == to.dimensionKey) return 0
+        return db.transaction { conn ->
+            conn.execute(
+                """
+                INSERT INTO world_block (world, dimension, y, z, x, name, turtle_id, ts)
+                SELECT ?, ?, y, z, x, name, turtle_id, ts FROM world_block
+                WHERE world = ? AND dimension = ? AND turtle_id = ?
+                ON CONFLICT (world, dimension, chunk_x, chunk_z, y, z, x) DO UPDATE SET
+                    name = EXCLUDED.name, turtle_id = EXCLUDED.turtle_id, ts = EXCLUDED.ts
+                WHERE world_block.ts <= EXCLUDED.ts
+                """,
+                to.worldKey, to.dimensionKey, from.worldKey, from.dimensionKey, turtleId
+            )
+            conn.execute(
+                "DELETE FROM world_block WHERE world = ? AND dimension = ? AND turtle_id = ?",
+                from.worldKey, from.dimensionKey, turtleId
+            )
+        }
+    }
+
     fun get(id: MapId, pos: BlockPos): KnownBlock? = db.transaction { conn ->
         conn.query(
             """

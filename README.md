@@ -436,6 +436,11 @@ stored as an empty string, since a primary key can't hold nulls. `chunk_x` and `
 (`x >> 4`, `z >> 4`, Minecraft's 16x16 chunks), so a box query looks up just the chunks it covers rather than every
 block at its heights. Nothing is cached in memory, so the map can grow beyond what fits in RAM.
 
+A turtle can't travel between worlds or dimensions, so when it reports a position in a different world or dimension
+from its last one (it was re-seeded with the right one), `FleetService.recordPosition` first moves the blocks it was the
+last to report from the old map to the new one. Where the new map already knows a cell, the newer report wins. Blocks
+it saw that another turtle has reported since stay where they are.
+
 `GET /api/map/blocks` returns the known blocks in a box, sorted by y, then z, then x:
 
 ```bash

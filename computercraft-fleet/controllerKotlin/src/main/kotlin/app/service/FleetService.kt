@@ -201,6 +201,16 @@ class FleetService(
     fun recordPosition(update: PositionUpdate) {
         registry.recordSeen(update.turtleId)
         update.seedId?.let { seeds.acknowledge(update.turtleId, it) }
+        // A turtle can't travel between worlds or dimensions, so a new one means it was re-seeded with the right one:
+        // the blocks it reported under the old map were really in the new one. Moved before the position is saved, so
+        // if this fails the next update tries again.
+        positions.get(update.turtleId)?.let { previous ->
+            worldMap.moveTurtleBlocks(
+                update.turtleId,
+                from = MapId(previous.world, previous.dimension),
+                to = MapId(update.world, update.dimension)
+            )
+        }
         positions.upsert(
             update.turtleId,
             TurtlePosition(
