@@ -31,8 +31,8 @@ class EquipmentStore(
                     items_known = EXCLUDED.items_known, capabilities = EXCLUDED.capabilities, ts = EXCLUDED.ts
                 """,
                 turtleId,
-                equipment.left?.let { side -> json.encodeToString(side) },
-                equipment.right?.let { side -> json.encodeToString(side) },
+                equipment.left?.let { json.encodeToString(EquippedUpgrade.serializer(), it) },
+                equipment.right?.let { json.encodeToString(EquippedUpgrade.serializer(), it) },
                 equipment.itemsKnown, equipment.capabilities, equipment.ts
             )
         }
