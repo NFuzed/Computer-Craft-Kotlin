@@ -5,6 +5,7 @@ import app.plugin.configureWebSockets
 import app.route.configureRoutes
 import app.service.FleetService
 import app.service.StationService
+import app.service.TripService
 import app.service.TurtleSessions
 import app.store.*
 import io.ktor.server.application.*
@@ -27,10 +28,11 @@ fun Application.module(db: Database) {
     val stationStore = StationStore(db)
 
     val registry = TurtleRegistry()
+    val sessions = TurtleSessions()
     val fleet = FleetService(
-        registry, TurtleSessions(), positionStore, seedStore, labelStore, inventoryStore, equipmentStore,
-        worldMapStore
+        registry, sessions, positionStore, seedStore, labelStore, inventoryStore, equipmentStore, worldMapStore
     )
+    val trips = TripService(sessions, positionStore, equipmentStore, inventoryStore, worldMapStore, stationStore)
 
-    configureRoutes(fleet, StationService(stationStore))
+    configureRoutes(fleet, StationService(stationStore), trips)
 }

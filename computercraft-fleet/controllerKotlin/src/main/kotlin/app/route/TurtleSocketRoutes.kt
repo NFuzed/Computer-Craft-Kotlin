@@ -1,12 +1,11 @@
 package app.route
 
 import app.service.FleetService
+import app.service.TripService
 import io.ktor.server.routing.*
 import io.ktor.server.websocket.*
 import io.ktor.websocket.*
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.*
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.*
 import protocol.Protocol
@@ -19,11 +18,11 @@ private const val HELLO_TIMEOUT_MS = 10_000L
 
 /**
  * One connection per running turtle. The turtle opens it (turtles can't accept incoming connections) and sends a
- * [Hello] first; after that the server pushes seeds, renames, slot selections, refuels and commands down the same connection as
- * they happen, plus a heartbeat every [Protocol.HEARTBEAT_INTERVAL_SECONDS] so the turtle can tell the connection is
+ * [Hello] first; after that the server pushes seeds, renames, slot selections, refuels, commands and paths down the same
+ * connection as they happen, plus a heartbeat every [Protocol.HEARTBEAT_INTERVAL_SECONDS] so the turtle can tell the connection is
  * still alive.
  */
-fun Route.turtleSocketRoutes(fleet: FleetService) {
+fun Route.turtleSocketRoutes(fleet: FleetService, trips: TripService) {
     webSocket(Protocol.Paths.WS_TURTLE) {
         val hello = withTimeoutOrNull(HELLO_TIMEOUT_MS) {
             runCatching { (incoming.receive() as? Frame.Text)?.let { decode<Hello>(it.readText()) } }.getOrNull()
@@ -44,19 +43,20 @@ fun Route.turtleSocketRoutes(fleet: FleetService) {
         try {
             for (frame in incoming) {
                 if (frame !is Frame.Text) continue
-                handleMessage(fleet, turtleId, frame.readText())?.let { error ->
+                handleMessage(fleet, trips, turtleId, frame.readText())?.let { error ->
                     send(Frame.Text(ProtocolJson.encodeToString(ErrorMessage(error = error))))
                 }
             }
         } finally {
             heartbeat.cancel()
             fleet.disconnect(turtleId, this)
+            withContext(NonCancellable) { trips.disconnected(turtleId) } // also when the server is shutting down
         }
     }
 }
 
 /** Handles one message from a connected turtle. Returns an error to send back, or null if it was handled. */
-private fun handleMessage(fleet: FleetService, turtleId: Int, text: String): String? {
+private suspend fun handleMessage(fleet: FleetService, trips: TripService, turtleId: Int, text: String): String? {
     val json = runCatching { ProtocolJson.parseToJsonElement(text).jsonObject }.getOrNull()
         ?: return "Message is not a JSON object"
     val type = json["type"]?.jsonPrimitive?.contentOrNull
@@ -82,6 +82,9 @@ private fun handleMessage(fleet: FleetService, turtleId: Int, text: String): Str
 
             Protocol.MessageTypes.COMMAND_RESULT ->
                 handle<CommandResultUpdate>(json, turtleId, { it.turtleId }) { fleet.recordCommandResult(it); null }
+
+            Protocol.MessageTypes.PATH_RESULT ->
+                handle<PathResultUpdate>(json, turtleId, { it.turtleId }) { trips.pathResult(it); null }
 
             Protocol.MessageTypes.BLOCK_OBSERVATIONS ->
                 handle<BlockObservations>(json, turtleId, { it.turtleId }) { update ->

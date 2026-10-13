@@ -124,6 +124,81 @@ data class CommandMessage(
     val command: String
 )
 
+/** Values of [PathStepMessage.action]: the turtle API call for each step. Moves and turns go through nav.lua. */
+object PathActions {
+    const val FORWARD = "forward"
+    const val BACK = "back"
+    const val UP = "up"
+    const val DOWN = "down"
+    const val TURN_LEFT = "turnLeft"
+    const val TURN_RIGHT = "turnRight"
+}
+
+/** One step of a [PathMessage]. With [dig], the cell is expected to be solid: the turtle digs it, then moves. */
+@Serializable
+data class PathStepMessage(
+    val action: String,             // one of PathActions
+    val dig: Boolean = false
+)
+
+/** Where a path was planned from. */
+@Serializable
+data class PathStart(
+    val x: Int,
+    val y: Int,
+    val z: Int,
+    val heading: String             // "N","E","S","W"
+)
+
+/**
+ * Server → turtle: follow these steps. After each move or turn the turtle reports its position and the blocks around
+ * it; when it finishes or stops it sends a [PathResultUpdate] with the same [pathId]. A new path replaces one that's
+ * still running.
+ *
+ * The steps only lead to the goal from [start], so a turtle that isn't there (it moved after the server planned)
+ * doesn't move, and replies blocked; the server then plans again from where it is.
+ */
+@Serializable
+data class PathMessage(
+    val v: Int = Protocol.VERSION,
+    val type: String = Protocol.MessageTypes.PATH,
+    val pathId: Long,
+    val start: PathStart,
+    val steps: List<PathStepMessage>
+)
+
+/** Server → turtle: stop following path [pathId] after the current step. The turtle replies with a cancelled result. */
+@Serializable
+data class PathCancelMessage(
+    val v: Int = Protocol.VERSION,
+    val type: String = Protocol.MessageTypes.PATH_CANCEL,
+    val pathId: Long
+)
+
+/** Values of [PathResultUpdate.status]. */
+object PathResults {
+    const val DONE = "done"             // every step ran
+    const val BLOCKED = "blocked"       // a move failed: something is in the way, or it couldn't be dug
+    const val FAILED = "failed"         // anything else, e.g. out of fuel; see error
+    const val CANCELLED = "cancelled"
+}
+
+/**
+ * Sent by a turtle when it finishes or stops following a [PathMessage], after its position and the blocks around it,
+ * so the server knows what stopped it before it replans. [stepsDone] counts the steps that ran.
+ */
+@Serializable
+data class PathResultUpdate(
+    val v: Int = Protocol.VERSION,
+    val type: String = Protocol.MessageTypes.PATH_RESULT,
+    val turtleId: Int,
+    val pathId: Long,
+    val status: String,             // one of PathResults
+    val stepsDone: Int,
+    val error: String? = null,      // the turtle API's reason, e.g. "Movement obstructed"
+    val ts: Long = System.currentTimeMillis() / 1000
+)
+
 /** Server → turtle: select inventory slot [slot] (1..16). The turtle replies with an [InventoryUpdate]. */
 @Serializable
 data class SelectSlotMessage(

@@ -146,6 +146,19 @@ function M.reportBlocks(world, dimension, blocks)
     })
 end
 
+-- Tells the server how following a path ended: status is "done", "blocked", "failed" or "cancelled", stepsDone how
+-- many steps ran, and err the turtle API's reason when it stopped early.
+function M.reportPathResult(pathId, status, stepsDone, err)
+    return M.send({
+        type = "path_result",
+        pathId = pathId,
+        status = status,
+        stepsDone = stepsDone,
+        error = err,
+        ts = math.floor(os.epoch("utc") / 1000)
+    })
+end
+
 -- Tells the server how a refuel went. fuelAdded is nil when fuel is unlimited.
 function M.reportRefuelResult(refuelId, refueled, err, fuelAdded)
     return M.send({
