@@ -13,15 +13,15 @@
     },
     {
       "path": "turtle/main.lua",
-      "sha1": "e216621c4fd7231c1627846d1484a3196adab9d1"
+      "sha1": "54c3880aac67c3c8790bcd0d2e217f7565c16f61"
     },
     {
       "path": "turtle/lib/net.lua",
-      "sha1": "85977a5713a1487c5a50e72d6ac270d4ac6c70c6"
+      "sha1": "84e13c44231d57120bc3c771716e965a2d26b92a"
     },
     {
       "path": "turtle/lib/nav.lua",
-      "sha1": "7528fbab9ef2f6a74a7919251287425faeb292f3"
+      "sha1": "50cbef74358f11c1b091838ce310b441d6619657"
     }
   ],
   "entry": "turtle/main.lua"

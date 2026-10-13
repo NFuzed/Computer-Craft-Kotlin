@@ -12,6 +12,7 @@ import kotlinx.serialization.json.*
 import protocol.Protocol
 import protocol.ProtocolJson
 import protocol.api.INVENTORY_SIZE
+import protocol.api.MAX_OBSERVED_BLOCKS
 import protocol.messages.*
 
 private const val HELLO_TIMEOUT_MS = 10_000L
@@ -81,6 +82,15 @@ private fun handleMessage(fleet: FleetService, turtleId: Int, text: String): Str
 
             Protocol.MessageTypes.COMMAND_RESULT ->
                 handle<CommandResultUpdate>(json, turtleId, { it.turtleId }) { fleet.recordCommandResult(it); null }
+
+            Protocol.MessageTypes.BLOCK_OBSERVATIONS ->
+                handle<BlockObservations>(json, turtleId, { it.turtleId }) { update ->
+                    if (update.blocks.size > MAX_OBSERVED_BLOCKS) {
+                        "At most $MAX_OBSERVED_BLOCKS blocks per message, got ${update.blocks.size}"
+                    } else {
+                        fleet.recordBlocks(update); null
+                    }
+                }
 
             else -> "Unknown message type: $type"
         }

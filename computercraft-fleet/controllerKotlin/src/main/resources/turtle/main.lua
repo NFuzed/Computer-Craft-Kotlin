@@ -33,6 +33,29 @@ local function reportInventory()
     end
 end
 
+-- Inspects the blocks in front of, above and below the turtle and sends them for the server's world map. Each
+-- inspect takes a tick, and other events are dropped meanwhile, like any turtle call. Does nothing until seeded,
+-- since the blocks' coordinates come from our position.
+local INSPECT = { forward = turtle.inspect, up = turtle.inspectUp, down = turtle.inspectDown }
+
+local function reportSurroundings()
+    local adjacent = nav.adjacent()
+    if not adjacent then
+        return
+    end
+    local blocks = {}
+    for dir, inspect in pairs(INSPECT) do
+        local found, block = inspect()
+        local p = adjacent[dir]
+        blocks[#blocks + 1] = { x = p.x, y = p.y, z = p.z, name = found and block.name or "minecraft:air" }
+    end
+    local pos = nav.position()
+    local ok, err = net.reportBlocks(pos.world, pos.dimension, blocks)
+    if not ok then
+        print("NET: " .. tostring(err))
+    end
+end
+
 -- Equipment last sent, as "left|right" item and peripheral names, so events that don't change it aren't resent.
 local sentEquipment
 
@@ -111,6 +134,9 @@ local function runCommand(msg)
     print(("CMD: %s %s"):format(tostring(msg.command), success and "ok" or ("failed: " .. tostring(reason))))
 
     reportPosition()
+    -- moves and turns change what's around us, digs and places change the blocks themselves, and a failed move shows
+    -- what's in the way
+    reportSurroundings()
     -- while a turtle call runs, other events (including turtle_inventory) are dropped, so report it here
     reportInventory()
     local sent, err = net.reportCommandResult(msg.commandId, msg.command, success == true,
@@ -122,6 +148,7 @@ end
 
 local function onConnect()
     reportPosition()
+    reportSurroundings()
     reportInventory()
     reportEquipment(true)
 end
@@ -136,6 +163,7 @@ local function onMessage(msg)
         if nav.applySeed(msg.seed) then
             local s = msg.seed
             print(("NAV: seeded by %s at %d %d %d facing %s"):format(s.source, s.x, s.y, s.z, s.heading))
+            reportSurroundings()
         end
         -- report even for a seed we already applied: the server resends it until a report acknowledges it
         reportPosition(true)

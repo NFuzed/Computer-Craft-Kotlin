@@ -129,6 +129,20 @@ function M.position()
     }
 end
 
+-- The cells in front of, above and below the turtle, as { forward = {x, y, z}, up = ..., down = ... },
+-- or nil if not seeded.
+function M.adjacent()
+    if not state then
+        return nil
+    end
+    local d = DELTA[state.heading]
+    return {
+        forward = { x = state.x + d[1], y = state.y, z = state.z + d[2] },
+        up = { x = state.x, y = state.y + 1, z = state.z },
+        down = { x = state.x, y = state.y - 1, z = state.z }
+    }
+end
+
 -- True if the position changed since the last successful report.
 function M.isDirty()
     return state ~= nil and changes ~= reported

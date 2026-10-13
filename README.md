@@ -26,10 +26,11 @@ uses to push position seeds and renames to it the moment the dashboard asks.
     │       │   ├── PendingLabel.kt  # LabelRequest + PendingLabel (renaming turtles)
     │       │   ├── TurtleEquipment.kt # TurtleEquipment, EquippedUpgrade, Capabilities
     │       │   ├── TurtleCommand.kt # Commands, CommandRequest, TurtleCommand, CommandResult
+    │       │   ├── WorldMap.kt      # KnownBlock, MapRegion (world map API)
     │       │   └── ApiError.kt
     │       └── messages/
     │           ├── PositionUpdate.kt
-    │           └── TurtleMessages.kt # Hello, LabelUpdate, SeedMessage, RenameMessage, ErrorMessage, HeartbeatMessage
+    │           └── TurtleMessages.kt # Hello, LabelUpdate, BlockObservations, SeedMessage, RenameMessage, ErrorMessage, HeartbeatMessage
     │
     └── controllerKotlin/            # The Ktor server
         └── src/main/
@@ -53,6 +54,7 @@ uses to push position seeds and renames to it the moment the dashboard asks.
             │       ├── SeedStore.kt       # Pending position seeds, saved to disk
             │       ├── LabelStore.kt      # Pending renames, saved to disk
             │       ├── EquipmentStore.kt  # Each turtle's last reported equipment, saved to disk
+            │       ├── WorldMapStore.kt   # Blocks the turtles have seen, saved to disk every few seconds
             │       └── TurtleRegistry.kt  # Label + last-seen per turtle (in memory)
             └── resources/           # Lua code that gets served to turtles
                 ├── startup.lua
@@ -66,7 +68,7 @@ uses to push position seeds and renames to it the moment the dashboard asks.
                     ├── main.lua     # Entry program: connects, then handles seeds and renames
                     └── lib/
                         ├── net.lua  # WebSocket connection to /ws/turtle (reconnects on drop)
-                        └── nav.lua  # Dead-reckoning position tracking (no GPS)
+                        └── nav.lua  # Dead-reckoning position tracking (no GPS), and the cells around the turtle
 ```
 
 Gradle builds everything as **one module**. The root `build.gradle.kts` adds the `protocol` and `controllerKotlin`
@@ -128,6 +130,7 @@ The route paths are defined in `protocol.Protocol.Paths`.
 | `POST` | `/api/turtles/{id}/inventory/selected` | Takes a `SelectSlotRequest` (`slot`, 1-16) and pushes it to the turtle, returning the request with `202`. `409` if the turtle isn't connected                                                                                                            |
 | `POST` | `/api/turtles/{id}/refuel`             | Takes a `RefuelRequest` (`count?`, 1-64; null burns the whole selected stack) and pushes it to the turtle, returning a `RefuelCommand` (`refuelId`, `count`, `ts`) with `202`. `409` if the turtle isn't connected. See [Refuelling](#refuelling)        |
 | `POST` | `/api/turtles/{id}/commands`           | Takes a `CommandRequest` (`command`, one of `Commands`) and pushes it to the turtle, returning a `TurtleCommand` (`commandId`, `command`, `ts`) with `202`. `400` for an unknown command, `409` if the turtle isn't connected. See [Commands](#commands) |
+| `GET`  | `/api/map/blocks`                      | Takes `minX`, `minY`, `minZ`, `maxX`, `maxY`, `maxZ` (inclusive, required, at most 256 apart on each axis) and optional `world` and `dimension`, and returns a `MapRegion` with every known block in that box. See [World map](#world-map)               |
 
 `/api` responses are JSON. Errors come back as `{"error": "..."}` with status `400`, `404` or `409`. `TurtleStatus` (
 in `protocol.api`) contains `turtleId`, `label`, `online`, `lastSeen`, `position`, `pendingSeed` (a seed the turtle
@@ -181,7 +184,7 @@ renames as soon as the dashboard sends them. There is no polling.
 2. The server records the label, replaces any older connection from the same turtle (e.g. it rebooted before the
    old one timed out), then sends any pending `rename` and `seed`.
 3. After that, the turtle sends `position_update`, `label_update`, `inventory_update`, `equipment_update`,
-   `refuel_result` and `command_result` messages.
+   `refuel_result`, `command_result` and `block_observations` messages.
    The server pushes `seed` and `rename` whenever the API queues one, `select_slot`, `refuel` and `command` when the
    API asks for one, replies `error` to a message it can't handle (the connection stays open), and sends a
    `heartbeat` every 10 s.
@@ -379,13 +382,34 @@ Like refuels, commands aren't queued (`409` while offline), since a move picked 
 stale by the time it connects. The server doesn't check capabilities: a turtle without a tool answers `dig` with the
 turtle API's reason (`No tool to dig with`). Moves need a seeded turtle; an unseeded one answers `not seeded`.
 
-The turtle runs the command, sends a `position_update` if it moved or turned and an `inventory_update` (fuel and items
+The turtle runs the command, sends a `position_update` if it moved or turned, a `block_observations` (see
+[World map](#world-map)) and an `inventory_update` (fuel and items
 may have changed), then a `command_result` with the same `commandId`, whether it worked, and the turtle API's reason if
 it didn't (e.g. `Movement obstructed`). The server keeps each turtle's latest result in memory and returns it as
 `lastCommand` in `TurtleStatus`.
 
 While a turtle API call runs, CC: Tweaked drops other events, including `websocket_message`, so a command sent while
 the previous one is still running is lost. The dashboard waits for each result before allowing the next command.
+
+## World map
+
+The server builds a map of the blocks the turtles have seen, for the pathfinder to plan over. A seeded turtle runs
+`turtle.inspect()`, `inspectUp()` and `inspectDown()` after it connects, after it's seeded and after every command, and
+sends the results as `block_observations`: up to 64 blocks, each with world coordinates worked out from its
+dead-reckoned position and heading (`nav.adjacent()`) and a block `name`, which is `minecraft:air` when nothing was
+there. Each inspect takes a tick and uses no fuel. If the turtle's position is wrong, so are the coordinates.
+
+`WorldMapStore` keeps one map per `world` and `dimension` (taken from the turtle's seed; either can be null), with
+the latest block reported at each cell as a `KnownBlock` (`x`, `y`, `z`, `name`, `turtleId`, `ts`). A new report
+replaces what was known about a cell. Cells nobody has seen aren't stored. Because turtles report after every move, it
+doesn't write the file on every change: it's saved to `data/worldmap.json` every 5 seconds if anything changed, and
+when the server stops. The file is written to a temporary file first and then moved into place.
+
+`GET /api/map/blocks` returns the known blocks in a box, sorted by y, then z, then x:
+
+```bash
+curl "localhost:8000/api/map/blocks?minX=0&minY=60&minZ=0&maxX=15&maxY=70&maxZ=15"
+```
 
 ## Equipment and capabilities
 
@@ -445,6 +469,7 @@ Done:
 - [x] Report a turtle's fuel and refuel it through the API
 - [x] Report a turtle's equipment and what it can do
 - [x] Move, turn, dig, place, drop, suck and attack through the API
+- [x] World map built from the blocks turtles inspect
 
 Not yet connected:
 

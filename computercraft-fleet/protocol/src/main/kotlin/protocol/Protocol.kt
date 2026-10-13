@@ -23,6 +23,7 @@ object Protocol {
         const val TURTLE_SELECTED_SLOT = "/turtles/{id}/inventory/selected"
         const val TURTLE_REFUEL = "/turtles/{id}/refuel"
         const val TURTLE_COMMANDS = "/turtles/{id}/commands"
+        const val MAP_BLOCKS = "/map/blocks"
 
         const val WS_TURTLE = "/ws/turtle"
     }
@@ -37,6 +38,7 @@ object Protocol {
         const val REFUEL_RESULT = "refuel_result"
         const val EQUIPMENT_UPDATE = "equipment_update"
         const val COMMAND_RESULT = "command_result"
+        const val BLOCK_OBSERVATIONS = "block_observations"
 
         // server → turtle
         const val SEED = "seed"

@@ -1,7 +1,7 @@
 -- turtle/lib/net.lua
 -- Keeps a WebSocket open to the Kotlin server's /ws/turtle. The turtle opens the connection (it can't accept
 -- incoming ones); after that the server pushes seeds, renames and slot selections down it, and we send positions,
--- labels, the inventory and equipment up.
+-- labels, the inventory, equipment and the blocks around us up.
 local M = {}
 
 local PROTOCOL_VERSION = 1
@@ -130,6 +130,18 @@ function M.reportCommandResult(commandId, command, success, err)
         command = command,
         success = success,
         error = err,
+        ts = math.floor(os.epoch("utc") / 1000)
+    })
+end
+
+-- Reports blocks the turtle inspected, as { {x, y, z, name}, ... } in world coordinates. The server adds them to its
+-- world map.
+function M.reportBlocks(world, dimension, blocks)
+    return M.send({
+        type = "block_observations",
+        world = world,
+        dimension = dimension,
+        blocks = blocks,
         ts = math.floor(os.epoch("utc") / 1000)
     })
 end
