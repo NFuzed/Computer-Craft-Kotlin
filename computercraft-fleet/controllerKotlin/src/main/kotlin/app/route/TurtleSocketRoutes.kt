@@ -4,6 +4,8 @@ import app.service.FleetService
 import io.ktor.server.routing.*
 import io.ktor.server.websocket.*
 import io.ktor.websocket.*
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.*
@@ -17,7 +19,8 @@ private const val HELLO_TIMEOUT_MS = 10_000L
 /**
  * One connection per running turtle. The turtle opens it (turtles can't accept incoming connections) and sends a
  * [Hello] first; after that the server pushes seeds, renames, slot selections, refuels and commands down the same connection as
- * they happen.
+ * they happen, plus a heartbeat every [Protocol.HEARTBEAT_INTERVAL_SECONDS] so the turtle can tell the connection is
+ * still alive.
  */
 fun Route.turtleSocketRoutes(fleet: FleetService) {
     webSocket(Protocol.Paths.WS_TURTLE) {
@@ -30,6 +33,13 @@ fun Route.turtleSocketRoutes(fleet: FleetService) {
 
         val turtleId = hello.turtleId
         fleet.connect(hello, this)
+        val heartbeat = launch {
+            val text = ProtocolJson.encodeToString(HeartbeatMessage())
+            while (true) {
+                delay(Protocol.HEARTBEAT_INTERVAL_SECONDS * 1000)
+                if (runCatching { send(Frame.Text(text)) }.isFailure) break
+            }
+        }
         try {
             for (frame in incoming) {
                 if (frame !is Frame.Text) continue
@@ -38,6 +48,7 @@ fun Route.turtleSocketRoutes(fleet: FleetService) {
                 }
             }
         } finally {
+            heartbeat.cancel()
             fleet.disconnect(turtleId, this)
         }
     }

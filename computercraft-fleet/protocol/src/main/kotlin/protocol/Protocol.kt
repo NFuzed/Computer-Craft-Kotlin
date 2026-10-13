@@ -3,6 +3,12 @@ package protocol
 object Protocol {
     const val VERSION = 1
 
+    /**
+     * How often the server sends each connected turtle a [MessageTypes.HEARTBEAT]. Turtles can't see WebSocket pings,
+     * so this is how they notice a connection that died without closing (net.lua's WATCHDOG_TIMEOUT).
+     */
+    const val HEARTBEAT_INTERVAL_SECONDS = 10L
+
     object Paths {
         const val MANIFEST = "/manifest.json"
         const val FILES = "/files/{path...}"
@@ -39,5 +45,6 @@ object Protocol {
         const val REFUEL = "refuel"
         const val COMMAND = "command"
         const val ERROR = "error"
+        const val HEARTBEAT = "heartbeat"
     }
 }

@@ -29,7 +29,7 @@ uses to push position seeds and renames to it the moment the dashboard asks.
     │       │   └── ApiError.kt
     │       └── messages/
     │           ├── PositionUpdate.kt
-    │           └── TurtleMessages.kt # Hello, LabelUpdate, SeedMessage, RenameMessage, ErrorMessage
+    │           └── TurtleMessages.kt # Hello, LabelUpdate, SeedMessage, RenameMessage, ErrorMessage, HeartbeatMessage
     │
     └── controllerKotlin/            # The Ktor server
         └── src/main/
@@ -183,9 +183,12 @@ renames as soon as the dashboard sends them. There is no polling.
 3. After that, the turtle sends `position_update`, `label_update`, `inventory_update`, `equipment_update`,
    `refuel_result` and `command_result` messages.
    The server pushes `seed` and `rename` whenever the API queues one, `select_slot`, `refuel` and `command` when the
-   API asks for one, and replies `error` to a message it can't handle (the connection stays open).
+   API asks for one, replies `error` to a message it can't handle (the connection stays open), and sends a
+   `heartbeat` every 10 s.
 
-The server pings every 15 s and drops a connection after 30 s without a reply. CC: Tweaked answers pings itself. If
+The server pings every 15 s and drops a connection after 30 s without a reply. CC: Tweaked answers pings itself, but
+Lua never sees them, so the turtle relies on the heartbeats instead: if nothing arrives for 30 s, `net.lua` closes the
+connection and reconnects. That catches connections that died without closing, e.g. when the server's PC sleeps. If
 the connection drops, `net.lua` reconnects every 5 s. Anything queued while a turtle is offline stays in
 `data/seeds.json` / `data/labels.json` and is sent on its next `hello`.
 
@@ -216,7 +219,7 @@ entry(SERVER)   -- turtle/main.lua, given the server base URL
           ├─ rename pushed → os.setComputerLabel(), label_update
           ├─ seed pushed → nav.applySeed(), position_update
           ├─ command pushed → nav move/turn or turtle.dig/place/..., position_update, inventory_update, command_result
-          └─ connection dropped → retry every 5 s
+          └─ connection dropped, or 30 s without a message → retry every 5 s
 ```
 
 Key details:
@@ -282,6 +285,7 @@ encoded with the shared `ProtocolJson` (`ignoreUnknownKeys = true`, `encodeDefau
 | `RefuelMessage`       | `refuel`           | server → turtle | `refuelId`, `count?` (1-64; null burns the whole selected stack)                                                             |
 | `CommandMessage`      | `command`          | server → turtle | `commandId`, `command` (one of `Commands`)                                                                                   |
 | `ErrorMessage`        | `error`            | server → turtle | `error`: why the last message was rejected                                                                                   |
+| `HeartbeatMessage`    | `heartbeat`        | server → turtle | none. Sent every 10 s; the turtle reconnects after 30 s without any message                                                  |
 
 ---
 

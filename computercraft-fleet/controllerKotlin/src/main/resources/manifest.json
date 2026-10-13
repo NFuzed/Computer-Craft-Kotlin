@@ -17,7 +17,7 @@
     },
     {
       "path": "turtle/lib/net.lua",
-      "sha1": "23472c99ed2997782765b2fe670e6bbfb51a1f81"
+      "sha1": "85977a5713a1487c5a50e72d6ac270d4ac6c70c6"
     },
     {
       "path": "turtle/lib/nav.lua",
