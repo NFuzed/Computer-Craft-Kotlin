@@ -24,7 +24,7 @@ data class EquippedUpgrade(
 /**
  * The upgrades a turtle last reported, and the [capabilities] the server worked out from them. A null side has nothing
  * equipped, but when [itemsKnown] is false the turtle couldn't read item names (older CC: Tweaked), so a null side may
- * still hold a tool.
+ * still hold a tool. [seeded] is true when the dashboard set it with an [EquipmentSeedRequest] instead.
  */
 @Serializable
 data class TurtleEquipment(
@@ -32,5 +32,16 @@ data class TurtleEquipment(
     val right: EquippedUpgrade? = null,
     val itemsKnown: Boolean,
     val capabilities: List<String>, // see [Capabilities]
+    val seeded: Boolean = false,
     val ts: Long
+)
+
+/**
+ * Sent by the dashboard to say what a turtle has equipped, for turtles that can't read it themselves (older CC: Tweaked
+ * doesn't see tools). A null side is empty. It stays until the turtle reports equipment with item names.
+ */
+@Serializable
+data class EquipmentSeedRequest(
+    val left: EquippedUpgrade? = null,
+    val right: EquippedUpgrade? = null
 )

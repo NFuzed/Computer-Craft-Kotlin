@@ -19,6 +19,7 @@ object Protocol {
         const val TURTLE = "/turtles/{id}"
         const val TURTLE_SEED = "/turtles/{id}/seed"
         const val TURTLE_LABEL = "/turtles/{id}/label"
+        const val TURTLE_EQUIPMENT = "/turtles/{id}/equipment"
         const val TURTLE_INVENTORY = "/turtles/{id}/inventory"
         const val TURTLE_SELECTED_SLOT = "/turtles/{id}/inventory/selected"
         const val TURTLE_REFUEL = "/turtles/{id}/refuel"

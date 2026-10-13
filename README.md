@@ -152,6 +152,7 @@ The route paths are defined in `protocol.Protocol.Paths`.
 | `GET`  | `/api/turtles/{id}`                    | One `TurtleStatus`, or `404`                                                                                                                                                                                                                                                                     |
 | `POST` | `/api/turtles/{id}/seed`               | Takes a `SeedRequest` (`x`, `y`, `z`, `heading`, `world?`, `dimension?`, `source?`) and returns the queued `PositionSeed` with `202`. The turtle doesn't have to be connected yet                                                                                                                |
 | `PUT`  | `/api/turtles/{id}/label`              | Takes a `LabelRequest` (`label?`; null or blank clears it, max 32 printable ASCII characters) and returns the turtle's `TurtleStatus` with `202`. See [Renaming](#renaming)                                                                                                                      |
+| `PUT`  | `/api/turtles/{id}/equipment`          | Takes an `EquipmentSeedRequest` (`left?`, `right?`, each an `EquippedUpgrade`; null is empty) and returns the turtle's `TurtleStatus`. `404` for an unknown turtle. See [Equipment and capabilities](#equipment-and-capabilities)                                                                |
 | `GET`  | `/api/turtles/{id}/inventory`          | The turtle's last reported `TurtleInventory`, or `404` if it never reported one. See [Inventory](#inventory)                                                                                                                                                                                     |
 | `POST` | `/api/turtles/{id}/inventory/selected` | Takes a `SelectSlotRequest` (`slot`, 1-16) and pushes it to the turtle, returning the request with `202`. `409` if the turtle isn't connected                                                                                                                                                    |
 | `POST` | `/api/turtles/{id}/refuel`             | Takes a `RefuelRequest` (`count?`, 1-64; null burns the whole selected stack) and pushes it to the turtle, returning a `RefuelCommand` (`refuelId`, `count`, `ts`) with `202`. `409` if the turtle isn't connected. See [Refuelling](#refuelling)                                                |
@@ -473,6 +474,19 @@ list worked out in `app/service/Capabilities.kt` (names in `protocol.api.Capabil
 Every turtle can move, place, drop, suck and refuel, so those aren't listed. Older CC: Tweaked versions don't have
 `turtle.getEquippedLeft/Right`; their turtles report `itemsKnown: false` and only peripheral upgrades, so a tool
 doesn't show up, and a peripheral block beside an empty side can be mistaken for an upgrade.
+
+**Seeding equipment.** For those turtles the dashboard can say what is equipped with
+`PUT /api/turtles/{id}/equipment` and an `EquipmentSeedRequest`, for example:
+
+```bash
+curl -X PUT localhost:8000/api/turtles/7/equipment \
+  -H 'Content-Type: application/json' \
+  -d '{"left": {"item": "minecraft:diamond_pickaxe"}, "right": {"item": "computercraft:wireless_modem_normal", "peripheralTypes": ["modem"]}}'
+```
+
+The server stores it like a report, with `itemsKnown: true`, the capabilities worked out the same way and
+`seeded: true`. A report with `itemsKnown: false` doesn't replace a seed, so it survives reconnects; a report from a
+turtle that can read its items does. Each equipped side needs an `item` or at least one peripheral type.
 
 ## Storage
 

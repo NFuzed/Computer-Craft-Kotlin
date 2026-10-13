@@ -22,7 +22,7 @@ fun Route.apiRoutes(fleet: FleetService) {
     }
 }
 
-/** A turtle's status, and the position seeds and renames the dashboard queues for it. */
+/** A turtle's status, the position seeds and renames the dashboard queues for it, and the equipment it seeds. */
 private fun Route.turtleRoutes(fleet: FleetService) {
     get(Protocol.Paths.TURTLES) {
         call.respond(fleet.allStatuses())
@@ -73,6 +73,32 @@ private fun Route.turtleRoutes(fleet: FleetService) {
         }
 
         call.respond(HttpStatusCode.Accepted, fleet.rename(id, label))
+    }
+
+    // Dashboard says what a turtle has equipped, for turtles that can't see their own tools (older CC: Tweaked)
+    put(Protocol.Paths.TURTLE_EQUIPMENT) {
+        val id = call.parameters["id"]?.toIntOrNull()
+            ?: return@put call.respond(HttpStatusCode.BadRequest, ApiError(INVALID_TURTLE_ID))
+
+        val request = runCatching { call.receive<EquipmentSeedRequest>() }.getOrElse {
+            return@put call.respond(HttpStatusCode.BadRequest, ApiError("Invalid equipment body"))
+        }
+
+        if (listOfNotNull(
+                request.left,
+                request.right
+            ).any { it.item.isNullOrBlank() && it.peripheralTypes.isEmpty() }
+        ) {
+            return@put call.respond(
+                HttpStatusCode.BadRequest,
+                ApiError("Each equipped side needs an item or a peripheral type")
+            )
+        }
+
+        val status = fleet.seedEquipment(id, request)
+            ?: return@put call.respond(HttpStatusCode.NotFound, ApiError("Unknown turtle: $id"))
+
+        call.respond(status)
     }
 }
 

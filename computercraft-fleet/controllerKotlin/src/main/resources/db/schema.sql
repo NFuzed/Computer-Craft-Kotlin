@@ -136,7 +136,8 @@ CREATE TABLE IF NOT EXISTS inventory_slot
 )
     );
 
--- The upgrades each turtle last reported (EquipmentStore). left/right are EquippedUpgrade as JSON, null when empty.
+-- The upgrades each turtle last reported or was seeded with (EquipmentStore). left/right are EquippedUpgrade as JSON,
+-- null when empty.
 CREATE TABLE IF NOT EXISTS turtle_equipment
 (
     turtle_id
@@ -156,11 +157,20 @@ CREATE TABLE IF NOT EXISTS turtle_equipment
 []
     NOT
     NULL,
+    seeded
+    BOOLEAN
+    NOT
+    NULL
+    DEFAULT
+    FALSE,
     ts
     BIGINT
     NOT
     NULL
 );
+-- Added after the table was first released, so databases created before it get the column too
+ALTER TABLE turtle_equipment
+    ADD COLUMN IF NOT EXISTS seeded BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- What the turtles have seen of the world (WorldMapStore): the last block reported at each cell.
 -- world and dimension are '' rather than null, since they're part of the primary key. The key starts with the chunk
