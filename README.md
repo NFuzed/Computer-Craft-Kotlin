@@ -39,6 +39,11 @@ uses to push position seeds and renames to it the moment the dashboard asks.
         │   │   ├── Main.kt          # Starts Netty on 0.0.0.0:8000
         │   │   ├── Application.kt   # Ktor module: plugins, stores, routes
         │   │   ├── plugin/WebSockets.kt
+        │   │   ├── path/
+        │   │   │   ├── PathPlanner.kt     # A* route planning (costs, rules, results)
+        │   │   │   ├── SearchTables.kt    # Primitive hash table and heap for the search
+        │   │   │   ├── BlockRules.kt      # Which blocks are open, and which are never dug or entered
+        │   │   │   └── Geometry.kt        # Heading, Pose, Box
         │   │   ├── route/
         │   │   │   ├── Routes.kt          # Registers all routes
         │   │   │   ├── ApiRoutes.kt       # /api/turtles (dashboard REST API)
@@ -81,6 +86,7 @@ uses to push position seeds and renames to it the moment the dashboard asks.
             ├── support/             # TestPostgres, fleetTest and FakeTurtle (see Tests)
             ├── store/               # Store tests against a real Postgres
             ├── service/             # Tests of plain logic, no database
+            ├── path/                # Pathfinding tests on worlds drawn as text (GridWorld)
             └── route/               # Whole-server tests over HTTP and /ws/turtle
 ```
 
@@ -520,6 +526,39 @@ never blocks another. Two stations may share a chest, e.g. one turtle above it a
 `world` or `dimension` never overlap. `StationCells.kt` works out the chest cell (`chestCell`); the pathfinder must
 never dig it. Stations are saved in the `station` table and kept in memory.
 
+## Pathfinding
+
+`PathPlanner` (in `app/path`) plans a turtle's route with A*. It isn't connected to turtles yet; `goto` comes next.
+It works on a `WorldView` (what's known at each cell, and a guess for cells nobody has seen) and returns the steps a
+turtle takes: `forward`, `back`, `up`, `down`, `turnLeft`, `turnRight`, each with the pose it ends at and whether
+it digs first. `Path.fuel` is the number of moves; turns and digs use no fuel.
+
+Costs are in moves (`PathCosts`), and the planner finds the cheapest path for them:
+
+| Step                                 | Cost   |
+|--------------------------------------|--------|
+| Move into known air or liquid        | 1      |
+| Turn                                 | 0.5    |
+| Back up (only into known open cells) | 1.1    |
+| Dig up or down, then move            | 1 + 2  |
+| Dig in front, then move              | 1 + 11 |
+| Cell nobody has seen                 | +0.01  |
+
+So a turtle takes a detour of up to 11 moves rather than dig one block sideways, and prefers digging up or down to
+open space over tunnelling. A cell nobody has seen counts as air or, if `WorldView.probablySolid` says so, as a dig;
+the turtle only digs cells the plan expects to be solid, and replans when it finds a block it didn't expect.
+
+`PathRules` say what one turtle may do on one trip: `canDig` (it has a tool), `impassable` cells it never enters (other
+turtles, station chests), `noDigZones` (boxes where nothing is dug), the `bounds` the search stays inside, and
+`maxNodes` (1.5 million states) after which it gives up with `TooFar`. Protected blocks are never dug or entered:
+anything from ComputerCraft (turtles, computers), storage (chests, barrels, shulker boxes, hoppers, furnaces),
+bedrock, spawners and portals.
+
+On a test machine a 200 block trip over unexplored ground plans in about 20 ms, and the worst case so far (from deep
+underground through unexplored, probably solid ground, which means going up to the surface and back down) in about
+0.4 s. `PathPlannerOptimalityTest` checks the paths are the cheapest by comparing with an exhaustive search on
+random worlds.
+
 ## Equipment and capabilities
 
 So the dashboard knows which commands a turtle can run, each turtle reports what it has equipped as an
@@ -598,6 +637,7 @@ Done:
 - [x] Move, turn, dig, place, drop, suck and attack through the API
 - [x] World map built from the blocks turtles inspect
 - [x] Fuel, drop and pickup stations set up through the API
+- [x] A* route planning (not yet used by turtles)
 
 Not yet connected:
 
