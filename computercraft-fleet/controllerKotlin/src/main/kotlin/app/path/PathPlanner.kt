@@ -26,13 +26,15 @@ data class PathCosts(
     // allowed, but only when known ways are much longer. Big values slow searches
     val unseen: Double = 0.01,          // extra for a cell nobody has seen, so known air wins a tie. Small, since
     // the heuristic can't count it: a bigger one makes long searches crawl
-    val back: Double = 0.1              // extra for backing up, so facing where it goes (and seeing it) wins a tie
+    val back: Double = 0.1,             // extra for backing up, so facing where it goes (and seeing it) wins a tie
+    val nudge: Double = 12.0            // extra for a cell another turtle has to move out of first: worth a detour of
+    // about this many moves, since the trip waits while it moves
 ) {
     init {
         // the heuristic counts each remaining block as at least one move, which must not overestimate
         require(
             move > 0 && turn >= 0 && digVertical >= 0 && digHorizontal >= 0 && unseenNoDig >= 0 && unseen >= 0 &&
-                    back >= 0
+                    back >= 0 && nudge >= 0
         )
     }
 }
@@ -41,6 +43,7 @@ data class PathCosts(
  * What one turtle may do on one trip.
  * - [canDig]: the turtle has a digging tool
  * - [impassable]: cells it must never enter, even if they're air: other turtles, their reserved cells, station chests
+ * - [movable]: other turtles' cells it may enter once they've moved out of the way, for [PathCosts.nudge] extra
  * - [noDigZones]: solid blocks in these are never dug
  * - [bounds]: the search never leaves this box, so a hopeless search can't wander the whole world
  * - [maxNodes]: give up after expanding this many states. A trip that starts and ends deep underground, through an
@@ -49,6 +52,7 @@ data class PathCosts(
 data class PathRules(
     val canDig: Boolean,
     val impassable: Set<BlockPos> = emptySet(),
+    val movable: Set<BlockPos> = emptySet(),
     val noDigZones: List<Box> = emptyList(),
     val bounds: Box,
     val maxNodes: Int = 1_500_000
@@ -91,16 +95,23 @@ class PathPlanner(private val world: WorldView, private val costs: PathCosts = P
 
     fun plan(start: Pose, goal: BlockPos, goalHeading: Heading? = null, rules: PathRules): PathResult {
         if (goal !in rules.bounds || goal in rules.impassable) return PathResult.Unreachable
-        Search(goal, goalHeading, rules).run {
-            return run(start)
-        }
+        return Search(goal, goalHeading, null, rules).run(start)
     }
 
     /**
-     * One search. States are (cell, heading) packed into a Long relative to the bounds; see [key]. Kept in
-     * primitive tables, since a long trip can visit millions of them.
+     * Plans the cheapest way out of [avoid]: to the nearest cell that isn't in it, facing any way. For a turtle moving
+     * out of another's way, with [avoid] the other's path. Already outside it, the path is empty.
      */
-    private inner class Search(val goal: BlockPos, val goalHeading: Heading?, val rules: PathRules) {
+    fun planAway(start: Pose, avoid: Set<BlockPos>, rules: PathRules): PathResult =
+        Search(start.pos, null, avoid, rules).run(start)
+
+    /**
+     * One search, to [goal] or, with [avoid], out of it (then [goal] is unused). States are (cell, heading) packed into
+     * a Long relative to the bounds; see [key]. Kept in primitive tables, since a long trip can visit millions of them.
+     */
+    private inner class Search(
+        val goal: BlockPos, val goalHeading: Heading?, val avoid: Set<BlockPos>?, val rules: PathRules
+    ) {
         private val min = rules.bounds.min
         private val sizeY = (rules.bounds.max.y - min.y + 1).toLong()
         private val sizeZ = (rules.bounds.max.z - min.z + 1).toLong()
@@ -131,7 +142,10 @@ class PathPlanner(private val world: WorldView, private val costs: PathCosts = P
             return PathResult.Unreachable
         }
 
-        private fun isGoal(pose: Pose) = pose.pos == goal && (goalHeading == null || pose.heading == goalHeading)
+        private fun isGoal(pose: Pose) = when (avoid) {
+            null -> pose.pos == goal && (goalHeading == null || pose.heading == goalHeading)
+            else -> pose.pos !in avoid
+        }
 
         /** Tries every step the turtle could take from [pose], reached for [cost]. */
         private fun expand(pose: Pose, cost: Double) {
@@ -180,9 +194,9 @@ class PathPlanner(private val world: WorldView, private val costs: PathCosts = P
             )
         }
 
-        /** Each block still to go needs at least one move. */
+        /** Each block still to go needs at least one move. Leaving [avoid] may take only one, so there it's 0. */
         private fun heuristic(x: Int, y: Int, z: Int) =
-            (abs(x - goal.x) + abs(y - goal.y) + abs(z - goal.z)) * costs.move
+            if (avoid != null) 0.0 else (abs(x - goal.x) + abs(y - goal.y) + abs(z - goal.z)) * costs.move
 
         /**
          * The cost of moving into the cell, digging it first (for [digCost] extra) if it's solid and that's allowed,
@@ -192,6 +206,7 @@ class PathPlanner(private val world: WorldView, private val costs: PathCosts = P
             val cell = BlockPos(x, y, z)
             lastDig = false
             if (cell !in rules.bounds || cell in rules.impassable) return Double.NaN
+            if (cell in rules.movable) return costs.move + costs.nudge // turtles are stored as air, so it's open after
             val mayDig = rules.canDig && rules.noDigZones.none { cell in it }
             val block = world.blockAt(cell)
             return when {
@@ -215,6 +230,7 @@ class PathPlanner(private val world: WorldView, private val costs: PathCosts = P
         private fun back(x: Int, y: Int, z: Int): Double {
             val cell = BlockPos(x, y, z)
             if (cell !in rules.bounds || cell in rules.impassable) return Double.NaN
+            if (cell in rules.movable) return costs.move + costs.back + costs.nudge
             val block = world.blockAt(cell) ?: return Double.NaN
             return if (BlockRules.isOpen(block)) costs.move + costs.back else Double.NaN
         }

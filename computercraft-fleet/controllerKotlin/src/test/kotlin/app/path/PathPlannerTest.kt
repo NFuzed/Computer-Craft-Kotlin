@@ -319,6 +319,60 @@ class PathPlannerTest {
     }
 
     @Test
+    fun `it goes through a turtle that can move when there's no other way`() {
+        val world = GridWorld.parse("y=0\n.....")
+        val start = pose(0, 0, 0, E)
+        val rules = PathRules(canDig = false, movable = setOf(BlockPos(2, 0, 0)), bounds = world.bounds)
+
+        val path = found(plan(world, start, BlockPos(4, 0, 0), rules = rules), world, start, rules)
+
+        assertEquals(List(4) { FORWARD }, path.actions())
+        assertEquals(4 * COSTS.move + COSTS.nudge, path.cost)
+    }
+
+    @Test
+    fun `it goes round a turtle that can move when that's shorter than waiting for it`() {
+        val world = GridWorld.parse(
+            """
+            y=0
+            .....
+            .....
+            """
+        )
+        val start = pose(0, 0, 0, E)
+        val rules = PathRules(canDig = false, movable = setOf(BlockPos(2, 0, 0)), bounds = world.bounds)
+
+        val path = found(plan(world, start, BlockPos(4, 0, 0), rules = rules), world, start, rules)
+
+        assertTrue(path.steps.none { it.to.pos == BlockPos(2, 0, 0) }, "it went through the turtle: ${path.actions()}")
+    }
+
+    @Test
+    fun `out of the way is the nearest cell off the other's path`() {
+        // the other turtle's path runs along row 0; the only way off it is the pocket at x 3
+        val world = GridWorld.parse(
+            """
+            y=0
+            ......
+            ###.##
+            """
+        )
+        val start = pose(1, 0, 0, E)
+        val avoid = (0..5).map { BlockPos(it, 0, 0) }.toSet()
+        val rules = PathRules(canDig = false, bounds = world.bounds)
+
+        val path = found(PathPlanner(world, COSTS).planAway(start, avoid, rules), world, start, rules)
+
+        assertEquals(BlockPos(3, 0, 1), path.steps.last().to.pos)
+        assertEquals(
+            PathResult.Found(Path(emptyList(), 0.0)),
+            PathPlanner(world, COSTS).planAway(start, emptySet(), rules)
+        )
+        val noRoom = PathRules(canDig = false, impassable = setOf(BlockPos(3, 0, 1)), bounds = world.bounds)
+        assertEquals(PathResult.Unreachable, PathPlanner(world, COSTS).planAway(start, avoid, noRoom))
+    }
+
+    @Test
     fun `it is unreachable when walled in and it can't dig`() {
         val world = GridWorld.parse("y=0\n.#.")
 
