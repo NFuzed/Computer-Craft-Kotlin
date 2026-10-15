@@ -12,6 +12,7 @@ local RETRY_DELAY = 5 -- seconds between reconnect attempts
 local WATCHDOG_TIMEOUT = 30
 
 local socket = nil -- the open websocket, or nil while disconnected
+local connections = 0 -- how many times we've connected, so a path can tell its connection was replaced
 
 -- http(s)://host -> ws(s)://host/ws/turtle
 local function socketUrl(server)
@@ -34,6 +35,11 @@ end
 
 function M.isConnected()
     return socket ~= nil
+end
+
+-- A number that changes every time we connect.
+function M.connection()
+    return connections
 end
 
 -- Reports a position snapshot from nav.position(). Its seedId acknowledges the seed it is based on.
@@ -181,6 +187,7 @@ function M.run(server, handlers)
         local ws, err = http.websocket(url)
         if ws then
             socket = ws
+            connections = connections + 1
             if M.send({ type = "hello", label = os.getComputerLabel() }) then
                 print(("NET: connected as turtle %d"):format(os.getComputerID()))
                 if handlers.onConnect then

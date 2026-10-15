@@ -182,7 +182,8 @@ It's stopped when the tests finish. The helpers are in `controllerKotlin/src/tes
 - **`simTurtle(id, world, start, canDig, fuel, stepDelayMs)`** puts a `SimTurtle` in a `SimWorld` and connects it.
   It does what `main.lua` does with paths: runs each step (digging first when told to), reports its position and the
   blocks around it after each one, stops when a move fails, and sends a `path_result`. Turtles are solid to each
-  other. `goto(...)`, `trip(id)` and `awaitTrip(id)` drive and follow trips.
+  other. `goto(...)`, `trip(id)` and `awaitTrip(id)` drive and follow trips. `disconnect(turtle)` closes its
+  connection; `reconnect(turtle)` opens a new one without closing the old, like `main.lua`'s watchdog.
 
 ```kotlin
 @Test
@@ -612,8 +613,10 @@ plans a path at once, so an impossible trip is refused (`422`), sends it as a `p
    new path from where the turtle is: `Trip.replans` counts these, and the trip fails after 20. When the step led
    into a cell the map says is open (a mob, a player), the server waits a second first.
 4. `done` ends the trip as `arrived`. `failed` (e.g. out of fuel) and no path from where it stopped end it as
-   `failed`, with `Trip.error` saying why. So does the turtle disconnecting: it stops its path when the connection
-   drops.
+   `failed`, with `Trip.error` saying why. So does the turtle disconnecting: it stops its path, without a result,
+   when the connection the path came on drops. A trip belongs to that connection, so it fails when the server closes
+   it even if the turtle has already connected again (e.g. its watchdog gave up on a connection the server still
+   thought was open, and the new `hello` replaced it); the turtle likewise stops a path from an older connection.
 
 A new goto replaces a trip in progress (the old one ends as `cancelled`), and `DELETE` cancels one: the server sends
 `path_cancel` and the turtle stops after its current step. Paths run in their own coroutine on the turtle

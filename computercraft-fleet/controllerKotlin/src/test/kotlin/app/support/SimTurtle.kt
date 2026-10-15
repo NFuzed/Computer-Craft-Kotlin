@@ -9,6 +9,7 @@ import io.ktor.client.plugins.websocket.*
 import io.ktor.websocket.*
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.decodeFromJsonElement
@@ -26,7 +27,8 @@ private val UP = BlockPos(0, 1, 0)
  * A turtle in a [SimWorld], connected to the server over /ws/turtle like a real one. It does what main.lua does with
  * paths: runs each step (digging first when the step says so), reports its position and the blocks in front, above
  * and below after each one, stops when a move fails, and sends a path_result. A path_cancel stops it after the
- * current step. Other messages are ignored.
+ * current step. Other messages are ignored. Like main.lua, a path stops without a result when its connection closes
+ * or the turtle connects again (see [run]).
  *
  * Start one with FleetTest.simTurtle, which waits until the server knows where it is.
  */
@@ -52,19 +54,28 @@ class SimTurtle(
     /** What was in the way each time a move failed, e.g. "minecraft:stone" or [TURTLE_BLOCK]. */
     val obstructions = mutableListOf<String>()
 
-    private val ready = CompletableDeferred<Unit>()
-    private lateinit var session: DefaultClientWebSocketSession
-    private val pending = ArrayDeque<JsonObject>() // messages that arrived while a path was running
+    /** One WebSocket connection, and the messages that arrived on it while a path was running. */
+    private class Connection(val session: DefaultClientWebSocketSession, val ready: CompletableDeferred<Unit>) {
+        val pending = ArrayDeque<JsonObject>()
+    }
+
+    // the newest connection; a path running on an older one stops
+    @Volatile
+    private lateinit var connection: Connection
 
     init {
         world.place(turtleId, start.pos)
     }
 
-    suspend fun awaitReady() = ready.await()
-
-    /** Connects, reports, and handles messages until the connection closes. */
-    suspend fun run(session: DefaultClientWebSocketSession) {
-        this.session = session
+    /**
+     * Connects, reports, and handles messages until the connection closes. [ready] completes once the server has
+     * everything it reported. Calling it again with another connection while one is open is a reconnect, as when
+     * main.lua's watchdog gives up on a connection the server still thinks is open: the older connection stops handling
+     * messages, and a path running on it stops before its next step.
+     */
+    suspend fun run(session: DefaultClientWebSocketSession, ready: CompletableDeferred<Unit>) {
+        val conn = Connection(session, ready)
+        connection = conn
         try {
             send(Hello(turtleId = turtleId))
             send(
@@ -82,19 +93,19 @@ class SimTurtle(
             reportPosition()
             reportSurroundings()
             sendRaw("""{"v":${Protocol.VERSION},"type":"test_sync","turtleId":$turtleId}""")
-            while (true) {
-                val message = pending.removeFirstOrNull() ?: receive() ?: break
-                handle(message)
+            while (connection === conn) {
+                val message = conn.pending.removeFirstOrNull() ?: receive(conn) ?: break
+                handle(conn, message)
             }
         } finally {
-            world.remove(turtleId)
+            if (connection === conn) world.remove(turtleId)
         }
     }
 
-    private suspend fun handle(message: JsonObject) {
+    private suspend fun handle(conn: Connection, message: JsonObject) {
         when (message.type) {
-            Protocol.MessageTypes.ERROR -> if ("test_sync" in message.toString()) ready.complete(Unit)
-            Protocol.MessageTypes.PATH -> follow(ProtocolJson.decodeFromJsonElement(message))
+            Protocol.MessageTypes.ERROR -> if ("test_sync" in message.toString()) conn.ready.complete(Unit)
+            Protocol.MessageTypes.PATH -> follow(conn, ProtocolJson.decodeFromJsonElement(message))
         }
     }
 
@@ -104,7 +115,7 @@ class SimTurtle(
         pose = to
     }
 
-    private suspend fun follow(path: PathMessage) {
+    private suspend fun follow(conn: Connection, path: PathMessage) {
         pathsReceived += path
         // like main.lua: a path planned from somewhere else would lead somewhere else, so refuse it
         val start = path.start
@@ -113,19 +124,21 @@ class SimTurtle(
             return result(path, PathResults.BLOCKED, 0, NOT_AT_START)
         }
         for ((i, step) in path.steps.withIndex()) {
+            // like main.lua, stop without a result once the connection the path came on is gone
+            if (connection !== conn || !conn.session.isActive) return
             // like main.lua, look for a cancel (or a newer path) between steps
-            for (message in drainIncoming()) {
+            for (message in drainIncoming(conn)) {
                 when {
                     message.type == Protocol.MessageTypes.PATH_CANCEL &&
                             ProtocolJson.decodeFromJsonElement<PathCancelMessage>(message).pathId == path.pathId ->
                         return result(path, PathResults.CANCELLED, i)
 
                     message.type == Protocol.MessageTypes.PATH -> {
-                        pending.addFirst(message) // run it next, instead of this one
+                        conn.pending.addFirst(message) // run it next, instead of this one
                         return result(path, PathResults.CANCELLED, i)
                     }
 
-                    else -> pending += message
+                    else -> conn.pending += message
                 }
             }
             val error = run(step)
@@ -187,9 +200,9 @@ class SimTurtle(
         send(BlockObservations(turtleId = turtleId, blocks = blocks))
     }
 
-    private suspend fun receive(): JsonObject? {
+    private suspend fun receive(conn: Connection): JsonObject? {
         while (true) {
-            val frame = session.incoming.receiveCatching().getOrNull() ?: return null
+            val frame = conn.session.incoming.receiveCatching().getOrNull() ?: return null
             if (frame !is Frame.Text) continue
             val json = ProtocolJson.parseToJsonElement(frame.readText()).jsonObject
             if (json.type != Protocol.MessageTypes.HEARTBEAT) return json
@@ -197,9 +210,9 @@ class SimTurtle(
     }
 
     /** Messages that have already arrived, without waiting. */
-    private fun drainIncoming(): List<JsonObject> = buildList {
+    private fun drainIncoming(conn: Connection): List<JsonObject> = buildList {
         while (true) {
-            val frame = session.incoming.tryReceive().getOrNull() ?: break
+            val frame = conn.session.incoming.tryReceive().getOrNull() ?: break
             if (frame !is Frame.Text) continue
             val json = ProtocolJson.parseToJsonElement(frame.readText()).jsonObject
             if (json.type != Protocol.MessageTypes.HEARTBEAT) add(json)
@@ -207,7 +220,9 @@ class SimTurtle(
     }
 
     private suspend inline fun <reified T> send(message: T) = sendRaw(ProtocolJson.encodeToString(message))
-    private suspend fun sendRaw(text: String) = session.send(Frame.Text(text))
+
+    // like net.send, always on the newest connection
+    private suspend fun sendRaw(text: String) = connection.session.send(Frame.Text(text))
 
     private companion object {
         const val OUT_OF_FUEL = "Out of fuel"

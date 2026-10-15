@@ -199,7 +199,8 @@ local function finishPath(path, status, stepsDone, reason)
 end
 
 -- Follows path.steps, reporting the position and what's around after each one. Stops when a step fails, when the
--- path is cancelled or replaced, or when the connection drops (the server then treats the trip as failed).
+-- path is cancelled or replaced, or when the connection it came on drops, even if we've connected again since (the
+-- server fails the trip when that connection closes, so a result would be ignored).
 local function followPath(path)
     local pos = nav.position()
     local start = path.start
@@ -209,8 +210,11 @@ local function followPath(path)
         return finishPath(path, "blocked", 0, "Not where the path starts")
     end
     for i, step in ipairs(path.steps) do
-        if not net.isConnected() then
-            currentPath = nil
+        if not net.isConnected() or net.connection() ~= path.connection then
+            if currentPath == path then
+                -- not a path that came on the new connection
+                currentPath = nil
+            end
             print("PATH: stopped, disconnected")
             return
         end
@@ -271,6 +275,7 @@ local function onMessage(msg)
         runCommand(msg)
     elseif msg.type == "path" then
         -- replaces a path that's still running; runPaths finishes that one first
+        msg.connection = net.connection()
         currentPath = msg
         os.queueEvent(PATH_QUEUED)
     elseif msg.type == "path_cancel" then

@@ -2,6 +2,7 @@ package app.service
 
 import app.path.*
 import app.store.*
+import io.ktor.websocket.*
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -54,6 +55,9 @@ data class TripConfig(
  * and when the turtle reports it was blocked (by then the server has the blocks it saw), plans a new path from where
  * it stopped. Other turtles' cells and station chests are never entered; the turtle digs only if it has a tool.
  *
+ * A trip belongs to the connection its path was sent on: when that one closes the trip fails, even if the turtle has
+ * already connected again (main.lua stops a path when its connection drops, and doesn't report it).
+ *
  * Trips are kept in memory: only each turtle's latest, for the dashboard to follow.
  */
 class TripService(
@@ -68,9 +72,13 @@ class TripService(
     // planning is CPU-bound and can take up to a second, so it runs off the threads serving requests and messages
     private val planningDispatcher: CoroutineDispatcher = Dispatchers.Default
 ) {
-    /** A trip and what the server needs to replan it. [blocked] counts the times the turtle was stopped. */
+    /**
+     * A trip and what the server needs to replan it. [session] is the connection its path was sent on; [blocked]
+     * counts the times the turtle was stopped.
+     */
     private data class ActiveTrip(
         val trip: Trip,
+        val session: WebSocketSession,
         val goal: BlockPos,
         val goalHeading: Heading?,
         val steps: List<PathStep>,
@@ -119,8 +127,9 @@ class TripService(
         trips[turtleId]?.takeIf { it.trip.status == TripStatuses.MOVING }?.let { old ->
             end(turtleId, old, TripStatuses.CANCELLED, "Replaced by trip ${trip.tripId}")
         }
-        if (!send(turtleId, pathId, start, path)) return GotoOutcome.NotReady("Turtle $turtleId is not connected")
-        trips[turtleId] = ActiveTrip(trip, goal, heading, path.steps)
+        val session = send(turtleId, pathId, start, path)
+            ?: return GotoOutcome.NotReady("Turtle $turtleId is not connected")
+        trips[turtleId] = ActiveTrip(trip, session, goal, heading, path.steps)
         GotoOutcome.Started(trip)
     }
 
@@ -156,10 +165,13 @@ class TripService(
         }
     }
 
-    /** The turtle's connection closed. Its trip fails, unless it has already reconnected. */
-    suspend fun disconnected(turtleId: Int) = mutex.withLock {
+    /**
+     * The turtle's connection [session] closed. A trip sent on it fails, even if the turtle has already connected
+     * again: the turtle stopped following the path when the connection dropped.
+     */
+    suspend fun disconnected(turtleId: Int, session: WebSocketSession) = mutex.withLock {
         val active = trips[turtleId]?.takeIf { it.trip.status == TripStatuses.MOVING } ?: return@withLock
-        if (!sessions.isConnected(turtleId)) end(turtleId, active, TripStatuses.FAILED, "The turtle disconnected")
+        if (active.session === session) end(turtleId, active, TripStatuses.FAILED, "The turtle disconnected")
     }
 
     private suspend fun replan(turtleId: Int, active: ActiveTrip, error: String?) {
@@ -190,10 +202,13 @@ class TripService(
         val replanned = trip.copy(
             pathId = pathId, steps = path.steps.size, fuel = path.fuel, replans = trip.replans + 1, updated = clock()
         )
-        trips[turtleId] = active.copy(trip = replanned, steps = path.steps)
-        if (!send(turtleId, pathId, start, path)) {
-            end(turtleId, trips.getValue(turtleId), TripStatuses.FAILED, "The turtle disconnected")
+        val session = send(turtleId, pathId, start, path)
+        if (session == null) {
+            end(turtleId, active.copy(trip = replanned), TripStatuses.FAILED, "The turtle disconnected")
+            return
         }
+        // the turtle may have connected again since the last path, in which case this one goes out on the new connection
+        trips[turtleId] = active.copy(trip = replanned, session = session, steps = path.steps)
     }
 
     /**
@@ -278,11 +293,13 @@ class TripService(
         return ended
     }
 
-    private suspend fun send(turtleId: Int, pathId: Long, start: Pose, path: Path): Boolean {
+    /** Sends the path. Returns the connection it went out on, or null if the turtle isn't connected or it failed. */
+    private suspend fun send(turtleId: Int, pathId: Long, start: Pose, path: Path): WebSocketSession? {
         val steps = path.steps.map { PathStepMessage(action = ACTIONS.getValue(it.action), dig = it.dig) }
         val from = PathStart(start.pos.x, start.pos.y, start.pos.z, start.heading.name)
         val message = PathMessage(pathId = pathId, start = from, steps = steps)
-        return sessions.send(turtleId, ProtocolJson.encodeToString(message))
+        val session = sessions.session(turtleId) ?: return null
+        return session.takeIf { runCatching { it.send(Frame.Text(ProtocolJson.encodeToString(message))) }.isSuccess }
     }
 
     private fun noPath(result: PathResult, from: BlockPos, to: BlockPos): String {
