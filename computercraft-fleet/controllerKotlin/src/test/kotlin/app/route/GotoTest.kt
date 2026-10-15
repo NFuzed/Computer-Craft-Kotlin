@@ -227,6 +227,28 @@ class GotoTest {
         assertTrue("disconnected" in done.error.orEmpty(), done.error)
     }
 
+    @Test
+    fun `a trip fails if the turtle reconnects before the server notices it dropped`() = fleetTest {
+        val world = SimWorld.parse("y=70\n" + ".".repeat(40))
+        val turtle = simTurtle(7, world, at(0, 70, 0, E), stepDelayMs = 30)
+        started(7, 39, 70, 0)
+        delay(100)
+
+        reconnect(turtle) // the turtle stops its path, without a result, like main.lua
+
+        val done = awaitTrip(7, timeoutMs = 3_000)
+        assertEquals(TripStatuses.FAILED, done.status)
+        assertTrue("disconnected" in done.error.orEmpty(), done.error)
+        val stoppedAt = turtle.pose
+        delay(200)
+        assertEquals(stoppedAt, turtle.pose)
+
+        // and it can be sent again on its new connection
+        started(7, 39, 70, 0)
+        assertEquals(TripStatuses.ARRIVED, awaitTrip(7).status)
+        assertEquals(BlockPos(39, 70, 0), turtle.pose.pos)
+    }
+
     // --- refused ---
 
     @Test

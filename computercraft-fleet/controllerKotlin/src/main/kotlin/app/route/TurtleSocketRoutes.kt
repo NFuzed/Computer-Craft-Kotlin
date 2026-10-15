@@ -50,7 +50,12 @@ fun Route.turtleSocketRoutes(fleet: FleetService, trips: TripService) {
         } finally {
             heartbeat.cancel()
             fleet.disconnect(turtleId, this)
-            withContext(NonCancellable) { trips.disconnected(turtleId) } // also when the server is shutting down
+            withContext(NonCancellable) {
+                trips.disconnected(
+                    turtleId,
+                    this@webSocket
+                )
+            } // also when the server is shutting down
         }
     }
 }

@@ -17,6 +17,9 @@ class TurtleSessions {
 
     fun isConnected(turtleId: Int): Boolean = map.containsKey(turtleId)
 
+    /** The turtle's connection, or null if it isn't connected. */
+    fun session(turtleId: Int): WebSocketSession? = map[turtleId]
+
     /** Sends [text] to the turtle. Returns false if it isn't connected or the send failed. */
     suspend fun send(turtleId: Int, text: String): Boolean {
         val session = map[turtleId] ?: return false

@@ -24,7 +24,7 @@ import kotlin.test.fail
  * background until the test ends.
  */
 class FleetTest(val client: HttpClient, private val scope: CoroutineScope) {
-    private val simJobs = HashMap<Int, Job>()
+    private val simJobs = HashMap<Int, MutableList<Job>>()
 
     /**
      * Connects as turtle [turtleId], says hello, and runs [block] with the connection. The connection closes when
@@ -51,14 +51,26 @@ class FleetTest(val client: HttpClient, private val scope: CoroutineScope) {
         stepDelayMs: Long = 0
     ): SimTurtle {
         val turtle = SimTurtle(turtleId, world, start, canDig, fuel, stepDelayMs)
-        simJobs[turtleId] = scope.launch { client.webSocket(Protocol.Paths.WS_TURTLE) { turtle.run(this) } }
-        withTimeout(5_000) { turtle.awaitReady() }
+        connect(turtle)
         return turtle
     }
 
-    /** Closes a sim turtle's connection, as if it was unloaded or crashed. */
+    /**
+     * Connects a sim turtle again without closing its connection first, as when its watchdog gives up on a connection
+     * the server still thinks is open. Returns once the server has what it reported on the new connection.
+     */
+    suspend fun reconnect(turtle: SimTurtle) = connect(turtle)
+
+    private suspend fun connect(turtle: SimTurtle) {
+        val ready = CompletableDeferred<Unit>()
+        val job = scope.launch { client.webSocket(Protocol.Paths.WS_TURTLE) { turtle.run(this, ready) } }
+        simJobs.getOrPut(turtle.turtleId) { mutableListOf() } += job
+        withTimeout(5_000) { ready.await() }
+    }
+
+    /** Closes a sim turtle's connections, as if it was unloaded or crashed. */
     suspend fun disconnect(turtle: SimTurtle) {
-        simJobs.remove(turtle.turtleId)?.cancelAndJoin()
+        simJobs.remove(turtle.turtleId)?.forEach { it.cancelAndJoin() }
     }
 
     suspend fun goto(turtleId: Int, x: Int, y: Int, z: Int, heading: String? = null): HttpResponse =
@@ -83,7 +95,7 @@ class FleetTest(val client: HttpClient, private val scope: CoroutineScope) {
     }
 
     internal suspend fun stopSims() {
-        simJobs.values.forEach { it.cancelAndJoin() }
+        simJobs.values.flatten().forEach { it.cancelAndJoin() }
         simJobs.clear()
     }
 }
