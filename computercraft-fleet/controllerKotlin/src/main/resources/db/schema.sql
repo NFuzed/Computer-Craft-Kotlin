@@ -263,3 +263,49 @@ CREATE TABLE IF NOT EXISTS station
     NOT
     NULL
 );
+
+-- Boxes the dashboard marks out (ZoneStore): 'nodig' zones planned routes never dig in, and 'quarry' areas for turtles
+-- to mine. Bounds are inclusive; a null min_y or max_y leaves the box open downwards or upwards.
+CREATE TABLE IF NOT EXISTS zone
+(
+    zone_id
+    BIGSERIAL
+    PRIMARY
+    KEY,
+    name
+    TEXT
+    NOT
+    NULL,
+    type
+    TEXT
+    NOT
+    NULL,
+    min_x
+    INTEGER
+    NOT
+    NULL,
+    max_x
+    INTEGER
+    NOT
+    NULL,
+    min_z
+    INTEGER
+    NOT
+    NULL,
+    max_z
+    INTEGER
+    NOT
+    NULL,
+    min_y
+    INTEGER,
+    max_y
+    INTEGER,
+    world
+    TEXT,
+    dimension
+    TEXT,
+    ts
+    BIGINT
+    NOT
+    NULL
+);

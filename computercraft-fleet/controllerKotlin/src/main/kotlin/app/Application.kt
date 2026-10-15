@@ -3,10 +3,7 @@ package app
 import app.plugin.configureSerialization
 import app.plugin.configureWebSockets
 import app.route.configureRoutes
-import app.service.FleetService
-import app.service.StationService
-import app.service.TripService
-import app.service.TurtleSessions
+import app.service.*
 import app.store.*
 import io.ktor.server.application.*
 
@@ -26,13 +23,16 @@ fun Application.module(db: Database) {
     val equipmentStore = EquipmentStore(db)
     val worldMapStore = WorldMapStore(db)
     val stationStore = StationStore(db)
+    val zoneStore = ZoneStore(db)
 
     val registry = TurtleRegistry()
     val sessions = TurtleSessions()
     val fleet = FleetService(
         registry, sessions, positionStore, seedStore, labelStore, inventoryStore, equipmentStore, worldMapStore
     )
-    val trips = TripService(sessions, positionStore, equipmentStore, inventoryStore, worldMapStore, stationStore)
+    val trips = TripService(
+        sessions, positionStore, equipmentStore, inventoryStore, worldMapStore, stationStore, zoneStore
+    )
 
-    configureRoutes(fleet, StationService(stationStore), trips)
+    configureRoutes(fleet, StationService(stationStore), ZoneService(zoneStore), trips)
 }

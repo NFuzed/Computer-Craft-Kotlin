@@ -49,6 +49,7 @@ uses to push position seeds and renames to it the moment the dashboard asks.
         │   │   │   ├── Routes.kt          # Registers all routes
         │   │   │   ├── ApiRoutes.kt       # /api/turtles (dashboard REST API)
         │   │   │   ├── StationRoutes.kt   # /api/stations (fuel, drop and pickup stations)
+        │   │   │   ├── ZoneRoutes.kt      # /api/zones (no-dig zones and quarries)
         │   │   │   ├── GotoRoutes.kt      # /api/turtles/{id}/goto (send a turtle somewhere)
         │   │   │   ├── TurtleSocketRoutes.kt # /ws/turtle (one WebSocket per running turtle)
         │   │   │   ├── BootstrapRoutes.kt # GET /bootstrap/boot.lua
@@ -58,6 +59,7 @@ uses to push position seeds and renames to it the moment the dashboard asks.
         │   │   │   ├── FleetService.kt    # Builds TurtleStatus; pushes seeds/renames to connected turtles
         │   │   │   ├── Capabilities.kt    # Works out what a turtle can do from its equipment
         │   │   │   ├── StationService.kt  # Checks stations and keeps them from overlapping
+        │   │   │   ├── ZoneService.kt     # Checks zones; a zone's map and Box for the planner
         │   │   │   ├── TripService.kt     # Plans, sends and replans turtles' trips
         │   │   │   ├── StationCells.kt    # A station's standing cell and chest cell
         │   │   │   └── TurtleSessions.kt  # The open /ws/turtle connection per turtle
@@ -70,6 +72,7 @@ uses to push position seeds and renames to it the moment the dashboard asks.
         │   │       ├── EquipmentStore.kt  # Each turtle's last reported equipment
         │   │       ├── WorldMapStore.kt   # Blocks the turtles have seen (database only, not cached)
         │   │       ├── StationStore.kt    # Fuel, drop and pickup stations
+        │   │       ├── ZoneStore.kt       # No-dig zones and quarries
         │   │       └── TurtleRegistry.kt  # Label + last-seen per turtle (in memory)
         │   └── resources/           # Lua code that gets served to turtles
         │       ├── db/schema.sql    # The tables, created on startup if missing
@@ -242,6 +245,11 @@ The route paths are defined in `protocol.Protocol.Paths`.
 | `GET`    | `/api/stations/{id}`                   | One `Station`, or `404`                                                                                                                                                                                                                                                                          |
 | `PUT`    | `/api/stations/{id}`                   | Takes a `StationRequest` and replaces the station, keeping its id; returns it with `200`. `400`, `404` or `409` as above                                                                                                                                                                         |
 | `DELETE` | `/api/stations/{id}`                   | Deletes the station: `204`, or `404`                                                                                                                                                                                                                                                             |
+| `GET`    | `/api/zones`                           | Every `Zone`, oldest first; `?type=nodig` or `quarry` returns only that type. See [Zones](#zones)                                                                                                                                                                                                |
+| `POST`   | `/api/zones`                           | Takes a `ZoneRequest` and returns the new `Zone` with `201`. `400` if it's invalid                                                                                                                                                                                                               |
+| `GET`    | `/api/zones/{id}`                      | One `Zone`, or `404`                                                                                                                                                                                                                                                                             |
+| `PUT`    | `/api/zones/{id}`                      | Takes a `ZoneRequest` and replaces the zone, keeping its id; returns it with `200`. `400` or `404` as above                                                                                                                                                                                      |
+| `DELETE` | `/api/zones/{id}`                      | Deletes the zone: `204`, or `404`                                                                                                                                                                                                                                                                |
 
 `/api` responses are JSON. Errors come back as `{"error": "..."}` with status `400`, `404` or `409`. `TurtleStatus` (
 in `protocol.api`) contains `turtleId`, `label`, `online`, `lastSeen`, `position`, `pendingSeed` (a seed the turtle
@@ -559,6 +567,25 @@ never blocks another. Two stations may share a chest, e.g. one turtle above it a
 `world` or `dimension` never overlap. `StationCells.kt` works out the chest cell (`chestCell`); the pathfinder must
 never dig it. Stations are saved in the `station` table and kept in memory.
 
+## Zones
+
+Zones are boxes marked out from the dashboard's map. A `nodig` zone is never dug by a planned route: trips plan
+around it, and fail rather than dig through when there's no other way. A `quarry` is an area for turtles to mine;
+it's only stored for now.
+
+A `ZoneRequest` has a `name` (at most 32 printable characters, trimmed), a `type`, inclusive bounds `minX`, `maxX`,
+`minZ`, `maxZ`, optional `minY` and `maxY`, and optional `world` and `dimension` like a station. A missing or null
+`minY` or `maxY` leaves the zone open that way, so a zone with neither covers every Y. Each min must not be more than
+its max (`400`). Zones may overlap each other and stations.
+
+```bash
+curl -X POST localhost:8000/api/zones -H "Content-Type: application/json"      -d '{"name":"Village","type":"nodig","minX":-20,"maxX":35,"minZ":10,"maxZ":60,"minY":55}'
+```
+
+`TripService` reads the zones every time it plans, so a change counts from the next plan or replan: the no-dig zones
+in the trip's `world` and `dimension` become `PathRules.noDigZones` (`Zone.box`, with an open Y bound reaching the end
+of the world). Zones are saved in the `zone` table and kept in memory.
+
 ## Pathfinding
 
 `PathPlanner` (in `app/path`) plans a turtle's route with A*; [Goto](#goto) uses it to send turtles places. It works on
@@ -605,7 +632,8 @@ plans a path at once, so an impossible trip is refused (`422`), sends it as a `p
    work and the stations. Once a trip has been blocked 3 times (`TripConfig.exploreUntilBlocked`), its new paths use
    `KnownWorld`'s guesses instead, so a turtle in rock digs through rather than probing the rock all round it. Other
    turtles' cells and station chests are never entered; the turtle digs
-   only if its equipment includes a digging tool. A path needing more fuel than the turtle has is refused.
+   only if its equipment includes a digging tool, and never in a no-dig [zone](#zones). A path needing more fuel than
+   the turtle has is refused.
 2. The turtle (`main.lua`) checks it is at the path's `start`; if not (it moved after the server planned), it doesn't
    move and replies `blocked`. Then it runs each step, digging first when a step says `dig` (repeatedly, for falling
    sand and gravel), and reports its position and the blocks around it after each one.
@@ -682,6 +710,7 @@ Everything is saved in Postgres (see [Database setup](#database-setup)):
 | `turtle_inventory`, `inventory_slot` | `InventoryStore` | Each turtle's last inventory and fuel |
 | `turtle_equipment`                   | `EquipmentStore` | Each turtle's last equipment          |
 | `world_block`                        | `WorldMapStore`  | The world map                         |
+| `zone`                               | `ZoneStore`      | No-dig zones and quarries             |
 
 All stores except `WorldMapStore` load their table into a `ConcurrentHashMap` on startup and write through to the
 database on every change, so reads never hit the database. `lastRefuel` and `lastCommand` aren't saved.
@@ -712,6 +741,7 @@ Done:
 - [x] Fuel, drop and pickup stations set up through the API
 - [x] A* route planning
 - [x] Send a turtle somewhere through the API, replanning when it's blocked
+- [x] No-dig zones and quarries set up through the API; trips never dig in a no-dig zone
 
 Not yet connected:
 

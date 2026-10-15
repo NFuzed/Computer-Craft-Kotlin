@@ -28,6 +28,8 @@ object Protocol {
         const val MAP_BLOCKS = "/map/blocks"
         const val STATIONS = "/stations"
         const val STATION = "/stations/{id}"
+        const val ZONES = "/zones"
+        const val ZONE = "/zones/{id}"
 
         const val WS_TURTLE = "/ws/turtle"
     }
