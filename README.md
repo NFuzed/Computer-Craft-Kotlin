@@ -222,34 +222,34 @@ The turtle's Lua code itself isn't tested; `SimTurtle` follows the same rules, s
 
 The route paths are defined in `protocol.Protocol.Paths`.
 
-| Method   | Path                                   | Returns                                                                                                                                                                                                                                                                                          |
-|----------|----------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `GET`    | `/bootstrap/boot.lua`                  | The bootstrap script, as plain text                                                                                                                                                                                                                                                              |
-| `GET`    | `/manifest.json`                       | The file manifest (path, SHA-1, entry point)                                                                                                                                                                                                                                                     |
-| `GET`    | `/files/{path...}`                     | Any file on the server's classpath under `resources/`, as raw bytes                                                                                                                                                                                                                              |
-| `GET`    | `/api/turtles`                         | `TurtleStatus[]` for every known turtle, sorted by ID                                                                                                                                                                                                                                            |
-| `GET`    | `/api/turtles/{id}`                    | One `TurtleStatus`, or `404`                                                                                                                                                                                                                                                                     |
-| `POST`   | `/api/turtles/{id}/seed`               | Takes a `SeedRequest` (`x`, `y`, `z`, `heading`, `world?`, `dimension?`, `source?`) and returns the queued `PositionSeed` with `202`. The turtle doesn't have to be connected yet                                                                                                                |
-| `PUT`    | `/api/turtles/{id}/label`              | Takes a `LabelRequest` (`label?`; null or blank clears it, max 32 printable ASCII characters) and returns the turtle's `TurtleStatus` with `202`. See [Renaming](#renaming)                                                                                                                      |
-| `PUT`    | `/api/turtles/{id}/equipment`          | Takes an `EquipmentSeedRequest` (`left?`, `right?`, each an `EquippedUpgrade`; null is empty) and returns the turtle's `TurtleStatus`. `404` for an unknown turtle. See [Equipment and capabilities](#equipment-and-capabilities)                                                                |
-| `GET`    | `/api/turtles/{id}/inventory`          | The turtle's last reported `TurtleInventory`, or `404` if it never reported one. See [Inventory](#inventory)                                                                                                                                                                                     |
-| `POST`   | `/api/turtles/{id}/inventory/selected` | Takes a `SelectSlotRequest` (`slot`, 1-16) and pushes it to the turtle, returning the request with `202`. `409` if the turtle isn't connected                                                                                                                                                    |
-| `POST`   | `/api/turtles/{id}/refuel`             | Takes a `RefuelRequest` (`count?`, 1-64; null burns the whole selected stack) and pushes it to the turtle, returning a `RefuelCommand` (`refuelId`, `count`, `ts`) with `202`. `409` if the turtle isn't connected. See [Refuelling](#refuelling)                                                |
-| `POST`   | `/api/turtles/{id}/commands`           | Takes a `CommandRequest` (`command`, one of `Commands`) and pushes it to the turtle, returning a `TurtleCommand` (`commandId`, `command`, `ts`) with `202`. `400` for an unknown command, `409` if the turtle isn't connected. See [Commands](#commands)                                         |
-| `GET`    | `/api/map/blocks`                      | Takes `minX`, `minY`, `minZ`, `maxX`, `maxY`, `maxZ` (inclusive, required, at most 256 apart on each axis), optional `world` and `dimension`, and optional `excludeAir` (`true` leaves out known air), and returns a `MapRegion` with every known block in that box. See [World map](#world-map) |
-| `GET`    | `/api/stations`                        | Every `Station`, oldest first; `?type=fuel`, `drop` or `pickup` returns only that type. See [Stations](#stations)                                                                                                                                                                                |
-| `POST`   | `/api/turtles/{id}/goto`               | Takes a `GotoRequest` (`x`, `y`, `z`, `heading?`), plans a path and sends it, returning the `Trip` with `202`. `400` for a bad heading, `409` if the turtle isn't connected or has no position, `422` if there's no path or not enough fuel. See [Goto](#goto)                                   |
-| `GET`    | `/api/turtles/{id}/goto`               | The turtle's current or last `Trip`, or `404`                                                                                                                                                                                                                                                    |
-| `DELETE` | `/api/turtles/{id}/goto`               | Cancels the trip in progress: the turtle stops after its current step. Returns the `Trip` with `202`, or `404`                                                                                                                                                                                   |
-| `POST`   | `/api/stations`                        | Takes a `StationRequest` and returns the new `Station` with `201`. `400` if it's invalid, `409` if it overlaps another station                                                                                                                                                                   |
-| `GET`    | `/api/stations/{id}`                   | One `Station`, or `404`                                                                                                                                                                                                                                                                          |
-| `PUT`    | `/api/stations/{id}`                   | Takes a `StationRequest` and replaces the station, keeping its id; returns it with `200`. `400`, `404` or `409` as above                                                                                                                                                                         |
-| `DELETE` | `/api/stations/{id}`                   | Deletes the station: `204`, or `404`                                                                                                                                                                                                                                                             |
-| `GET`    | `/api/zones`                           | Every `Zone`, oldest first; `?type=nodig` or `quarry` returns only that type. See [Zones](#zones)                                                                                                                                                                                                |
-| `POST`   | `/api/zones`                           | Takes a `ZoneRequest` and returns the new `Zone` with `201`. `400` if it's invalid                                                                                                                                                                                                               |
-| `GET`    | `/api/zones/{id}`                      | One `Zone`, or `404`                                                                                                                                                                                                                                                                             |
-| `PUT`    | `/api/zones/{id}`                      | Takes a `ZoneRequest` and replaces the zone, keeping its id; returns it with `200`. `400` or `404` as above                                                                                                                                                                                      |
-| `DELETE` | `/api/zones/{id}`                      | Deletes the zone: `204`, or `404`                                                                                                                                                                                                                                                                |
+| Method   | Path                                   | Returns                                                                                                                                                                                                                                                                                                          |
+|----------|----------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `GET`    | `/bootstrap/boot.lua`                  | The bootstrap script, as plain text                                                                                                                                                                                                                                                                              |
+| `GET`    | `/manifest.json`                       | The file manifest (path, SHA-1, entry point)                                                                                                                                                                                                                                                                     |
+| `GET`    | `/files/{path...}`                     | Any file on the server's classpath under `resources/`, as raw bytes                                                                                                                                                                                                                                              |
+| `GET`    | `/api/turtles`                         | `TurtleStatus[]` for every known turtle, sorted by ID                                                                                                                                                                                                                                                            |
+| `GET`    | `/api/turtles/{id}`                    | One `TurtleStatus`, or `404`                                                                                                                                                                                                                                                                                     |
+| `POST`   | `/api/turtles/{id}/seed`               | Takes a `SeedRequest` (`x`, `y`, `z`, `heading`, `world?`, `dimension?`, `source?`) and returns the queued `PositionSeed` with `202`. The turtle doesn't have to be connected yet                                                                                                                                |
+| `PUT`    | `/api/turtles/{id}/label`              | Takes a `LabelRequest` (`label?`; null or blank clears it, max 32 printable ASCII characters) and returns the turtle's `TurtleStatus` with `202`. See [Renaming](#renaming)                                                                                                                                      |
+| `PUT`    | `/api/turtles/{id}/equipment`          | Takes an `EquipmentSeedRequest` (`left?`, `right?`, each an `EquippedUpgrade`; null is empty) and returns the turtle's `TurtleStatus`. `404` for an unknown turtle. See [Equipment and capabilities](#equipment-and-capabilities)                                                                                |
+| `GET`    | `/api/turtles/{id}/inventory`          | The turtle's last reported `TurtleInventory`, or `404` if it never reported one. See [Inventory](#inventory)                                                                                                                                                                                                     |
+| `POST`   | `/api/turtles/{id}/inventory/selected` | Takes a `SelectSlotRequest` (`slot`, 1-16) and pushes it to the turtle, returning the request with `202`. `409` if the turtle isn't connected                                                                                                                                                                    |
+| `POST`   | `/api/turtles/{id}/refuel`             | Takes a `RefuelRequest` (`count?`, 1-64; null burns the whole selected stack) and pushes it to the turtle, returning a `RefuelCommand` (`refuelId`, `count`, `ts`) with `202`. `409` if the turtle isn't connected. See [Refuelling](#refuelling)                                                                |
+| `POST`   | `/api/turtles/{id}/commands`           | Takes a `CommandRequest` (`command`, one of `Commands`) and pushes it to the turtle, returning a `TurtleCommand` (`commandId`, `command`, `ts`) with `202`. `400` for an unknown command, `409` if the turtle isn't connected. See [Commands](#commands)                                                         |
+| `GET`    | `/api/map/blocks`                      | Takes `minX`, `minY`, `minZ`, `maxX`, `maxY`, `maxZ` (inclusive, required, at most 256 apart on each axis), optional `world` and `dimension`, and optional `excludeAir` (`true` leaves out known air), and returns a `MapRegion` with every known block in that box. See [World map](#world-map)                 |
+| `GET`    | `/api/stations`                        | Every `Station`, oldest first; `?type=fuel`, `drop` or `pickup` returns only that type. See [Stations](#stations)                                                                                                                                                                                                |
+| `POST`   | `/api/turtles/{id}/goto`               | Takes a `GotoRequest` (`x`, `y`, `z`, `heading?`), plans a path and sends it (or waits while idle turtles move out of the way), returning the `Trip` with `202`. `400` for a bad heading, `409` if the turtle isn't connected or has no position, `422` if there's no path or not enough fuel. See [Goto](#goto) |
+| `GET`    | `/api/turtles/{id}/goto`               | The turtle's current or last `Trip`, or `404`                                                                                                                                                                                                                                                                    |
+| `DELETE` | `/api/turtles/{id}/goto`               | Cancels the trip in progress: the turtle stops after its current step. Returns the `Trip` with `202`, or `404`                                                                                                                                                                                                   |
+| `POST`   | `/api/stations`                        | Takes a `StationRequest` and returns the new `Station` with `201`. `400` if it's invalid, `409` if it overlaps another station                                                                                                                                                                                   |
+| `GET`    | `/api/stations/{id}`                   | One `Station`, or `404`                                                                                                                                                                                                                                                                                          |
+| `PUT`    | `/api/stations/{id}`                   | Takes a `StationRequest` and replaces the station, keeping its id; returns it with `200`. `400`, `404` or `409` as above                                                                                                                                                                                         |
+| `DELETE` | `/api/stations/{id}`                   | Deletes the station: `204`, or `404`                                                                                                                                                                                                                                                                             |
+| `GET`    | `/api/zones`                           | Every `Zone`, oldest first; `?type=nodig` or `quarry` returns only that type. See [Zones](#zones)                                                                                                                                                                                                                |
+| `POST`   | `/api/zones`                           | Takes a `ZoneRequest` and returns the new `Zone` with `201`. `400` if it's invalid                                                                                                                                                                                                                               |
+| `GET`    | `/api/zones/{id}`                      | One `Zone`, or `404`                                                                                                                                                                                                                                                                                             |
+| `PUT`    | `/api/zones/{id}`                      | Takes a `ZoneRequest` and replaces the zone, keeping its id; returns it with `200`. `400` or `404` as above                                                                                                                                                                                                      |
+| `DELETE` | `/api/zones/{id}`                      | Deletes the zone: `204`, or `404`                                                                                                                                                                                                                                                                                |
 
 `/api` responses are JSON. Errors come back as `{"error": "..."}` with status `400`, `404` or `409`. `TurtleStatus` (
 in `protocol.api`) contains `turtleId`, `label`, `online`, `lastSeen`, `position`, `pendingSeed` (a seed the turtle
@@ -604,13 +604,15 @@ Costs are in moves (`PathCosts`), and the planner finds the cheapest path for th
 | Dig in front, then move              | 1 + 11 |
 | Cell nobody has seen                 | +0.01  |
 | ...probably solid, but can't be dug  | +4     |
+| Another turtle that can make way     | +12    |
 
 So a turtle takes a detour of up to 11 moves rather than dig one block sideways, and prefers digging up or down to
 open space over tunnelling. A cell nobody has seen counts as air or, if `WorldView.probablySolid` says so, as a dig;
 the turtle only digs cells the plan expects to be solid, and replans when it finds a block it didn't expect.
 
 `PathRules` say what one turtle may do on one trip: `canDig` (it has a tool), `impassable` cells it never enters (other
-turtles, station chests), `noDigZones` (boxes where nothing is dug), the `bounds` the search stays inside, and
+turtles, station chests), `movable` cells it may enter once the turtle there has made way (see
+[Goto](#making-way)), `noDigZones` (boxes where nothing is dug), the `bounds` the search stays inside, and
 `maxNodes` (1.5 million states) after which it gives up with `TooFar`. Protected blocks are never dug or entered:
 anything from ComputerCraft (turtles, computers), storage (chests, barrels, shulker boxes, hoppers, furnaces),
 bedrock, spawners and portals.
@@ -619,6 +621,9 @@ On a test machine a 200 block trip over unexplored ground plans in about 20 ms, 
 underground through unexplored, probably solid ground, which means going up to the surface and back down) in about
 0.4 s. `PathPlannerOptimalityTest` checks the paths are the cheapest by comparing with an exhaustive search on
 random worlds.
+
+`PathPlanner.planAway(start, avoid, rules)` plans the cheapest way to any cell outside `avoid`, facing any way: how a
+turtle gets off another's path.
 
 ## Goto
 
@@ -630,8 +635,8 @@ plans a path at once, so an impossible trip is refused (`422`), sends it as a `p
    first it **explores**: cells nobody has seen count as open, so the path takes the shortest way through unexplored
    ground and the turtle maps that route as it goes, which pays off because turtles go back and forth between their
    work and the stations. Once a trip has been blocked 3 times (`TripConfig.exploreUntilBlocked`), its new paths use
-   `KnownWorld`'s guesses instead, so a turtle in rock digs through rather than probing the rock all round it. Other
-   turtles' cells and station chests are never entered; the turtle digs
+   `KnownWorld`'s guesses instead, so a turtle in rock digs through rather than probing the rock all round it. Station
+   chests are never entered, and other turtles only once they've [made way](#making-way); the turtle digs
    only if its equipment includes a digging tool, and never in a no-dig [zone](#zones). A path needing more fuel than
    the turtle has is refused.
 2. The turtle (`main.lua`) checks it is at the path's `start`; if not (it moved after the server planned), it doesn't
@@ -650,6 +655,31 @@ A new goto replaces a trip in progress (the old one ends as `cancelled`), and `D
 `path_cancel` and the turtle stops after its current step. Paths run in their own coroutine on the turtle
 (`parallel.waitForAny`), so messages such as a cancel still arrive while it moves. Trips are kept in memory: each
 turtle's current or last one.
+
+### Making way
+
+A turtle that can make way (connected, with fuel left or unlimited, and not on a trip of its own) doesn't block a
+path: the planner may go through it for 12 extra moves (`PathCosts.nudge`), so a short detour still wins. When the
+path goes through one:
+
+1. The server plans that turtle's way off the path with `planAway`: the nearest cell off it, pulling over into a side
+   pocket, backing up or going on past the goal, whichever is cheapest. It may dig, as a last resort (outside no-dig
+   zones). Two turtles in the way never head for the same cell.
+2. **Recursively:** that way off may itself go through turtles that can make way. Each of them plans a way off both
+   paths (the trip's and the way off it), and so on, depth first, up to 4 deep (`TripConfig.maxMakeWayDepth`) and
+   32 plans per search (`maxMakeWayPlans`). Turtles in the way are taken nearest first, so in a tunnel the near one
+   asks the far one to move on first. A turtle already in the chain (the travelling one, or one making way) is never
+   asked to move, so there are no cycles.
+3. **Backtracking:** a turtle with no way off (or not the fuel for it) is planned round instead, and what was planned
+   for the turtles under it is undone. If nothing works, there's no path.
+4. Each turtle gets a trip of its own, with `makingWayFor` set to the turtle it makes way for; replanned like any
+   other, but always to the nearest cell off the paths it avoids. Trips wait for the ones making way for them, so the
+   deepest moves first and the rest follow back up the chain.
+5. Meanwhile a waiting trip (`status` `waiting`, `waitingFor` the turtles still moving) sends no path. Once they have
+   all finished (arrived, or failed), it plans again from where it is, which counts as a replan.
+
+Offline turtles, turtles out of fuel, and turtles on a trip (including one that is waiting or making way) stay
+impassable: a busy turtle is never interrupted. Cancelling a waiting trip doesn't call back the turtles making way.
 
 **Guessing unseen cells** (`KnownWorld`, after exploring has been blocked a few times): a cell nobody has seen is
 guessed from what's known above and below it in
@@ -742,6 +772,7 @@ Done:
 - [x] A* route planning
 - [x] Send a turtle somewhere through the API, replanning when it's blocked
 - [x] No-dig zones and quarries set up through the API; trips never dig in a no-dig zone
+- [x] Idle turtles move out of the way of a trip
 
 Not yet connected:
 
