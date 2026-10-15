@@ -9,14 +9,8 @@ import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
 import kotlinx.coroutines.delay
-import protocol.api.AIR
-import protocol.api.ApiError
-import protocol.api.Trip
-import protocol.api.TripStatuses
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertFalse
-import kotlin.test.assertTrue
+import protocol.api.*
+import kotlin.test.*
 
 /**
  * Sending turtles somewhere, end to end: the real server plans and replans, and [SimTurtle]s follow the paths in a
@@ -32,6 +26,25 @@ class GotoTest {
     }
 
     private suspend fun HttpResponse.error(): String = body<ApiError>().error
+
+    /**
+     * Marks the blocks at [x] from [minZ] to [maxZ] as a zone; open in Y unless [minY] or [maxY] is given.
+     */
+    private suspend fun FleetTest.zone(
+        x: Int, minZ: Int, maxZ: Int = minZ, type: String = ZoneTypes.NO_DIG, minY: Int? = null, maxY: Int? = null,
+        dimension: String? = null
+    ) {
+        val response = client.post("/api/zones") {
+            contentType(ContentType.Application.Json)
+            setBody(
+                ZoneRequest(
+                    name = "Zone", type = type, minX = x, maxX = x, minZ = minZ, maxZ = maxZ, minY = minY, maxY = maxY,
+                    dimension = dimension
+                )
+            )
+        }
+        assertEquals(HttpStatusCode.Created, response.status, response.bodyAsText())
+    }
 
     // --- arriving ---
 
@@ -134,6 +147,38 @@ class GotoTest {
         val done = awaitTrip(7)
         assertEquals(TripStatuses.FAILED, done.status)
         assertTrue("No path" in done.error.orEmpty(), done.error)
+    }
+
+    // --- no-dig zones ---
+
+    @Test
+    fun `with a pickaxe, it won't dig through a no-dig zone, even with no way round`() = fleetTest {
+        val world = SimWorld.parse("y=70\n..#..")
+        simTurtle(7, world, at(0, 70, 0, E), canDig = true)
+        zone(2, minZ = -100, maxZ = 100) // the whole wall, top to bottom
+
+        started(7, 4, 70, 0)
+
+        val done = awaitTrip(7)
+        assertEquals(TripStatuses.FAILED, done.status)
+        assertNotEquals(AIR, world.terrainAt(BlockPos(2, 70, 0)), "the block in the zone was dug")
+    }
+
+    @Test
+    fun `a no-dig zone only counts in its Y range, its dimension, and as no-dig`() = fleetTest {
+        val world = SimWorld.parse("y=70\n..#..")
+        val turtle = simTurtle(7, world, at(0, 70, 0, E), canDig = true)
+        zone(2, 0, maxY = 60)
+        zone(2, 0, minY = 80)
+        zone(2, 0, dimension = "the_nether")
+        zone(2, 0, type = ZoneTypes.QUARRY)
+
+        started(7, 4, 70, 0)
+
+        val done = awaitTrip(7)
+        assertEquals(TripStatuses.ARRIVED, done.status, done.error)
+        assertEquals(BlockPos(4, 70, 0), turtle.pose.pos)
+        assertEquals(AIR, world.terrainAt(BlockPos(2, 70, 0)), "none of the zones covers the block, so it's dug")
     }
 
     @Test

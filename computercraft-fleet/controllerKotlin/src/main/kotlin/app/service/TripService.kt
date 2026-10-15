@@ -53,7 +53,8 @@ data class TripConfig(
 /**
  * Sends turtles places. A trip plans a path with [PathPlanner] over what the world map knows, sends it to the turtle,
  * and when the turtle reports it was blocked (by then the server has the blocks it saw), plans a new path from where
- * it stopped. Other turtles' cells and station chests are never entered; the turtle digs only if it has a tool.
+ * it stopped. Other turtles' cells and station chests are never entered; the turtle digs only if it has a tool, and
+ * never in a no-dig zone.
  *
  * A trip belongs to the connection its path was sent on: when that one closes the trip fails, even if the turtle has
  * already connected again (main.lua stops a path when its connection drops, and doesn't report it).
@@ -67,6 +68,7 @@ class TripService(
     private val inventories: InventoryStore,
     private val worldMap: WorldMapStore,
     private val stations: StationStore,
+    private val zones: ZoneStore,
     private val config: TripConfig = TripConfig(),
     private val clock: () -> Long = { System.currentTimeMillis() / 1000 },
     // planning is CPU-bound and can take up to a second, so it runs off the threads serving requests and messages
@@ -237,6 +239,7 @@ class TripService(
         val rules = PathRules(
             canDig = equipments.get(turtleId)?.capabilities.orEmpty().contains(Capabilities.DIG),
             impassable = otherTurtles(turtleId, mapId) + stationChests(mapId),
+            noDigZones = noDigZones(mapId),
             bounds = bounds
         )
         val world = KnownWorld(known, config.surfaceGuess, assumeUnseenOpen = explore)
@@ -251,6 +254,10 @@ class TripService(
 
     private fun stationChests(mapId: MapId): Set<BlockPos> =
         stations.all().filter { it.mapId == mapId }.map { it.chestCell }.toSet()
+
+    /** The no-dig zones in the same map, read for every plan so a zone changed mid-trip counts from the next replan. */
+    private fun noDigZones(mapId: MapId): List<Box> =
+        zones.all().filter { it.type == ZoneTypes.NO_DIG && it.mapId == mapId }.map { it.box }
 
     /** Why the turtle can't afford [path], or null if it can (or its fuel isn't known, or is unlimited). */
     private fun fuelShortage(turtleId: Int, path: Path): String? {
